@@ -52,7 +52,6 @@ $name .= "_t$temp" if defined $temp;
 
 my @command = (
 	# hard code paths, nucleosome in current directory
-	# '/uufs/chpc.utah.edu/common/home/hcibcore/u0462865/perl/perls/5.16/bin/perl',
 	'./nucleosome_prediction_v3/nucleosome_prediction.pl',
 	'-t', "$name\_prediction",
 	'-s', "$fixfile", 

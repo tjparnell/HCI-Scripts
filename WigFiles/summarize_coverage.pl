@@ -1,4 +1,4 @@
-#!/home/BioApps/perl/perls/5.16/bin/perl
+#!/usr/bin/env perl
 
 use strict;
 use Statistics::Lite qw(min max sum mean median stddev);
