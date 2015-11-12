@@ -238,8 +238,6 @@ while (my $line = $iterator->next_row) {
 		push @tumorVals, $tumorCount;
 	}
 	
-	### Check for depth again
-	
 	
 	
 	# update the line
@@ -247,6 +245,13 @@ while (my $line = $iterator->next_row) {
 		$line->value($form_i, join(':', qw(GT AD FA)) );
 		$line->value($norm_i, join(':', map {$normals{$_}} qw(GT AD FA)) );
 		$line->value($tumr_i, join(':', map {$tumors{$_}} qw(GT AD FA)) );
+		# update INFO field
+		foreach (qw(IC IHP NT OVERLAP QSI QSI_NT RC RU SGT SVTYPE TQSI TQSI_NT MQ0 SOMATIC VT)) {
+			delete $info{$_} if exists $info{$_};
+		}
+		# regenerate INFO field with remainder
+		$line->value($info_i, 
+			join(";", map { join("=", $_, $info{$_}) } sort {$a cmp $b} keys %info) );
 	}
 	else {
 		$line->value($form_i, join(":", @formatKeys));
