@@ -7,7 +7,14 @@ use Bio::ToolBox::Data;
 unless (@ARGV) {
 	print <<END;
 
-Summarize Somatic variant tables into gene hit count tables
+Summarize Somatic variant tables into gene hit count tables. 
+Assume tables are from USeq VCFReporter text output. 
+
+If you want to optionally filter based on the maximum normal or delta frequency, 
+then run add_annot_table_freqs.pl to put the frequency columns in, then run 
+this script. It assumes there are then columns 'NORMAL_AltFrequency' and 
+'TUMOR_AltFrequency'.
+
 Usage: $0 <outfile> <file1 file2 ...>
     Options:
      --norm <integer>   maximum normal alt frequency, default 100
@@ -105,7 +112,7 @@ foreach my $file (@ARGV) {
 		} elsif ($variant =~ /^frameshift/) {
 			push @{ $genes{$ensgene}{frameshift} }, "$sample:$start";
 		} else {
-			print "other variant '$variant'\n";
+# 			print "other variant '$variant'\n";
 			push @{ $genes{$ensgene}{other} }, "$sample:$start";
 		}
 		$genes{$ensgene}{count}++;
