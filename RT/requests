@@ -1,0 +1,208 @@
+#!/usr/local/perlbrew/perls/5.16/bin/perl
+
+use strict;
+use LWP;
+use HTTP::Request::Common;
+use CGI;
+
+our $VERSION = '1.0';
+
+
+### Settings
+my $url = "http://localhost/bioinformaticshelp/REST/1.0/search/ticket?";
+my $user = '';
+my $pass = '';
+
+
+
+### Main
+run();
+exit 0;
+
+
+
+
+
+######## Subroutines #######
+
+sub run {
+	my $response = query_server();
+	check_errors($response);
+	my $tickets = process_response($response);
+	redact($tickets);
+	print_table($tickets);
+}
+
+# Query RT server via REST
+sub query_server {
+	my $ua = LWP::UserAgent->new();
+	my @data = (
+		'query'  => q((Status='New' OR Status='Open') AND Queue='Bioinformatics'),
+		'format' => 'l', # long form
+		'user'   => $user,
+		'pass'   => $pass,
+	);
+
+	my $request = POST($url, \@data, Content_Type => 'form-data');
+	my $response = $ua->request($request);
+	# print $response->content;
+	return $response;
+}
+
+# Check for response error codes
+sub check_errors {
+	my $response = shift;
+	my ($code, $remainder) = split('\n', $response->content, 2);
+		# just take the first line
+	return if ($code =~ /200 ok$/i);
+	
+	# print an error page as necessary
+	my $q = CGI->new;
+	print $q->header;
+	print $q->start_html(-title => "No Success");
+	print $q->h1("Server Error");
+	print <<END
+The Server returned an error.<p>
+$code<p> 
+Please rectify the error.
+END
+	;
+	print $q->end_html;
+	exit 0;
+}
+
+
+# Process the response text into tickets
+sub process_response {
+	my $response = shift;
+	my @tickets;
+	
+	my @current;
+	foreach (split /\n/, $response->content) {
+		next if /^RT\/4\.\d.+Ok$/; # the response code
+		next if /^$/;
+		
+		# moved to the next element defined by --
+		if (/^\-\-$/) {
+			# store the current ticket and reset
+			push @tickets, { @current };
+			@current = ();
+			next;
+		}
+		
+		# attributes we are interested in
+		if (/^id: ticket\/(\d+)$/) {
+			push @current, 'Ticket' => $1;
+		}
+		if (/^(Requestors|Owner|Subject): (.+)$/)  {
+			push @current, $1 => $2;
+		}
+	}
+	if (@current) {
+		# last one
+		push @tickets, { @current };
+	}
+	
+# 	print Dumper(\@tickets);
+	return \@tickets;
+}
+
+
+# Obfuscate details for privacy concerns
+sub redact {
+	my $tickets = shift;
+	foreach my $t (@$tickets) {
+		
+		# redact email address of the requestor
+		my @address = split /, */, $t->{Requestors}; # may be more than one
+		foreach (@address) {
+			# take first 5 letters and last 6 letters
+			# seems reasonable to me
+			s/^(.{5}).*(.{6})$/$1...$2/;
+		}
+		$t->{Requestors} = join(", ", @address);
+		
+		# redact subject
+		# most of these are subjects from the email bioinformaticshelp online request form
+		next if ($t->{Subject} =~ 
+			/^(?:ChIPSeq|RNASeq|BisSeq|Exome|Microarray|Custom) analysis$/i);
+		next if ($t->{Subject} =~ /^Recommendations$/i);
+		next if ($t->{Subject} =~ /^Publication help$/i);
+		next if ($t->{Subject} =~ /^New software request$/i);
+		if ($t->{Subject} =~ /^Bioinformatics analysis for/) {
+			# user name in subject, from GNomEx
+			$t->{Subject} = 'Bioinformatics analysis';
+			next;
+		}
+		$t->{Subject} = 'Custom analysis'; # everything else
+	}
+}
+
+
+# Print the table of tickets
+sub print_table {
+	my $tickets = shift;
+	
+	# Initialize the html output
+	my $q = CGI->new;
+	print $q->header;
+	print $q->start_html(-title => "Current Requests");
+	print $q->h1('Current Requests');
+	my $number = scalar(@$tickets);
+	print <<INTRO;
+There are currently $number active (either new or opened) requests in the system.
+Each request is assigned to a member of the core (Owner). New requests are automatically 
+assigned to Nobody and will be transferred to a member once opened.
+<p>
+INTRO
+	# Table headers
+	my @headers = qw(Ticket Requestors Owner Subject);
+	
+	# Generate table data for the html table
+	my @rows;
+	foreach my $t (sort { $b->{'Ticket'} <=> $a->{'Ticket'} } @$tickets) {
+		# decreasing sort of Ticket number
+		my @data = map { $t->{$_} } @headers;
+		push @rows, $q->td(\@data);
+	}
+	
+	# Generate the html table
+	print $q->table( 
+		{-border => 2, -style => 'width:600px'},
+		$q->Tr(
+			{-align => 'LEFT', -valign => 'TOP' },
+			[ $q->th(\@headers), @rows], 
+		),
+	);
+	
+	# Finish
+	print $q->end_html;
+	return;
+}
+
+
+__END__
+
+=head1 DESCRIPTION
+
+A simple CGI script to query a Request Tracker website and return a simple html 
+table containing redacted information regarding the current active requests.
+
+The RT website is queried using the REST API. This is more convenient than using 
+the Perl API and returns a text list of all new and open requests. This list is 
+then parsed for the desired information and assembled into simple array of hashes.
+Personal identifiable information is redacted. The requests are then sorted 
+with newest first and placed into a simple HTML table and returned for the user.
+
+The script is customized for the HCI Bioinformatics Core. The RT server URL, 
+user, and password is hard coded at the top of the script. The script must 
+be secured by changing ownership and readability to the web user only.
+
+=head1 AUTHOR
+
+Timothy J. Parnell, PhD
+HCI Bioinformatics Shared Resource
+Huntsman Cancer Institute
+University of Utah
+Salt Lake City, UT 84122
+

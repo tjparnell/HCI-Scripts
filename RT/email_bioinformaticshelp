@@ -1,0 +1,322 @@
+#!/usr/local/perlbrew/perls/5.16/bin/perl
+
+use strict;
+use CGI;
+use Email::Valid;
+use Email::Simple;
+use Email::MIME;
+use Email::Sender::Simple;
+use lib '/opt/rt4/lib';
+use RT;
+RT->LoadConfig;
+
+our $VERSION = '1.1';
+
+
+### Collect parameters ###
+# these are going to be global variables
+my $query = CGI->new();
+check_parameters();
+
+
+### Send an email ###
+my $email = generate_email(); 
+my $result = Email::Sender::Simple->send($email);
+
+
+### Print the html response for the success
+final_output();
+
+
+
+
+
+
+
+### Subroutines ###
+sub check_parameters {
+	
+	# required information
+	unless ($query->param('name')) {
+		missing_item_error('Name');
+	}
+	unless ($query->param('pi')) {
+		missing_item_error('Principal Investigator');
+	}
+	unless ($query->param('category')) {
+		missing_item_error('Category');
+	}
+
+	# spammer
+	my $binomial_name = join(' ', $query->param('genus'), $query->param('species'));
+	unless ($binomial_name eq 'Homo sapiens') {
+		non_human_error($binomial_name);
+	}
+
+	# check email
+	check_email_address();
+}
+
+sub check_email_address {
+	
+	# check if email is present
+	unless ($query->param('email')) {
+		missing_item_error('email address');
+	}
+	
+	# check for valid looking email address
+	my $email = Email::Valid->address(
+		-address    => $query->param('email'),
+		-mxcheck    => 1,
+	);
+	if ($email) {
+		# it is possible for small errors to be corrected in the email address
+		$query->param('email', $email); # update the email address
+	}
+	else {
+		my $error = Email::Valid->details();
+		invalid_email_error($error);
+	}
+	
+	# check if email is from an acceptable domain
+	# to do this, we are pulling the pass white list that is used by 
+	# RT::Interface::Email::HCIWhiteListFilter
+	# we need to load the RT config file to get this
+	my %config = RT->Config->Get('Plugin_HCIWhiteListFilter');
+	my $passDomains = $config{pass};
+	
+	return unless $passDomains; # skip this test if we don't have a pass list
+	my $ok = 0;
+	foreach my $domain (@$passDomains) {
+		if ($email =~ /$domain/) {
+			$ok = 1;
+			last;
+		}
+	}
+	unless ($ok) {
+		invalid_email_error("acceptable domain");
+	}
+}
+
+
+sub generate_email {
+	
+	# first generate the body
+	my $body = $query->param('details') . "\n\n";
+	$body .= "The " . $query->param('pi') . " lab\n";
+	$body .= " Phone ". $query->param('phone') . "\n" if $query->param('phone');
+	$body .= " GNomEx Number ". $query->param('gnomexID') . "\n" 
+		if $query->param('gnomexID');
+	$body .= "\n";
+	
+	# then generate the email
+	my $email;
+	my $filename = $query->param('userfile');
+	if ($filename) {
+		# user has uploaded a file, create multi-part MIME email
+		
+		# get the file contents
+		my $contents;
+		my $file = $query->upload('userfile'); # lightweight file object???
+		if (defined $file) {
+			my $buffer;
+			my $fh = $file->handle; # get a real IO::Handle object
+			while (my $bytes = $fh->read($buffer, 1024)) {
+				$contents .= $buffer;
+			}
+		}
+		else {
+			$@ = "no file handle for file '$filename'";
+			email_attachment_error();
+		}
+		
+		# generate the multi-part email
+		# do this under eval because I don't know if it will work
+		eval { $email = Email::MIME->create(
+			header_str  => [
+				To      => 'bioinformaticshelp@hci-bio-rt.hci.utah.edu',
+				From    => $query->param('email'),
+				Subject => $query->param('category'),
+			],
+			parts       => [
+				Email::MIME->create(
+					attributes  => {
+						content_type => "text/plain",
+						charset      => 'UTF-8',
+						encoding     => 'quoted-printable',
+					},
+					body_str    => "$body",
+				),
+				Email::MIME->create(
+					attributes  => {
+						filename     => $filename,
+						name         => $filename, # which is which???
+						content_type => $query->uploadInfo($filename)->{'Content-Type'},
+						encoding     => 'base64',
+					},
+					body        => $contents,
+				),
+			],
+		);
+		}; # end of eval statement
+		
+		email_attachment_error() unless ($email);
+	}
+	else {
+		# no uploaded file, create a simple email
+		$email = Email::Simple->create(
+			header  => [
+				To      => "bioinformaticshelp\@hci-bio-rt.hci.utah.edu",
+				From    => $query->param('email'),
+				Subject => $query->param('category'),
+			],
+			body    => $body,
+		);
+	}
+	
+	return $email;
+}
+
+
+sub final_output {
+	# check the email sent result
+	my $result_type = ref $result;
+	
+	# return an html response for successful submission
+	print $query->header;
+	
+	# header is dependent on result
+	if ($result_type =~ /failure/i) {
+		print $query->start_html(-title => "Failure");
+		print $query->h1("The email could not be sent.");
+		print "The failure message: " . $result->message . "<br>\n";
+	} 
+	elsif ($result_type =~ /success/i) {
+		print $query->start_html(-title => "Success");
+		print $query->h1("Your request was successfully entered.");
+	}
+	else {
+		print $query->start_html(-title => "Unknown");
+		print $query->h1("The email status is unknown.");
+		print "The return object is $result_type.<br>\n";
+	}
+	
+	# message
+	my $name = $query->param('name');
+	print "Thank you, human $name, for your submission. A request has been forwarded to our Request Tracking system. You should receive an automated response with a Request ID number. Use this number to track progress. Below are details you sent.<p>";
+	print "Category: " . $query->param('category') . "<p>";
+	print "Details: " . $query->param('details') . "<p>";
+	print " GNomEx Request Number ". $query->param('gnomexID') . "<p>" 
+		if $query->param('gnomexID');
+	
+	# workorder reminder
+	print <<WORKORDER;
+<p>
+If you are starting a new project with us and you or your lab have not yet filed a
+work authorization form, you should do so now. Contact a Core member for details.<br>
+WORKORDER
+
+	
+	# Go back
+	print <<END;
+<p>
+<a href="/index.html"> Return</a> to main page.<br>
+END
+	;
+	print $query->end_html;
+	exit 0;
+
+}
+
+sub non_human_error {
+	# print an html error response for robotic spammers
+	my $name = shift;
+	print $query->header;
+	print $query->start_html(-title => "No Success");
+	print $query->h1("No Spammers Allowed");
+	print <<END;
+Sorry. We currently only serve humans and robots deemed Three Laws compliant, not <i>$name</i>. Proto humans may be served if they are willing to evolve.
+<p> 
+If you think you are a human or closely related species, please go back and try again.
+END
+	print $query->end_html;
+	exit 0;
+}
+
+sub invalid_email_error {
+	# print an html error response when email is invalid
+	my $error = shift;
+	my $email = $query->param('email');
+	
+	print $query->header;
+	print $query->start_html(-title => "No Success");
+	print $query->h1("Suspicious email");
+	print <<END;
+Your email "$email" looks suspicious or did not pass verification. 
+It failed the "$error" check. Try putting in a valid email, preferably 
+from a University of Utah or other popular provider account. You may also 
+try contacting a member of the core directly.
+<p> 
+Please go back and try again.
+END
+	print $query->end_html;
+	exit 0;
+}
+
+sub missing_item_error {
+	# print an html error response for missing information
+	my $missing = shift;
+	
+	print $query->header;
+	print $query->start_html(-title => "No Success");
+	print $query->h1("$missing is missing");
+	print <<END;
+Your submission is missing the $missing parameter. We would really like this information. 
+<p> 
+Please go back and try again.
+END
+	print $query->end_html;
+	exit 0;
+}
+
+sub email_attachment_error {
+	# print an html error when we cannot attach the file
+	
+	print $query->header;
+	print $query->start_html(-title => "No Success");
+	print $query->h1("Unable to attach email");
+	print <<END;
+Your file cannot be attached to the request email. 
+<p> 
+This is the error message:
+<p>
+$@
+<p>
+Please report the error or submit without an attachment.
+END
+	print $query->end_html;
+	exit 0;
+
+}
+
+
+__END__
+
+=head1 DESCRIPTION
+
+A simple CGI script to process the email request and forward it to the Request 
+Tracker website. This works with the F<submission.hmtl> web form. It will 
+verify the required information is present, verify that the simple human Turing 
+test has been passed, generate an appropriate email, process a file attachment 
+if present, and send the email.
+
+This script was customized specifically for the HCI Bioinformatics Shared Resource.
+
+=head1 AUTHOR
+
+Timothy J. Parnell, PhD
+HCI Bioinformatics Shared Resource
+Huntsman Cancer Institute
+University of Utah
+Salt Lake City, UT 84122
+

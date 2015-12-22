@@ -1,0 +1,90 @@
+<html>
+<head><title>Request for Bioinformatics Assistance</title>
+</head>
+<body>
+
+<body>
+<h1>Bioinformatics Help Submission</h1>
+<p>
+Welcome to the HCI Bioinformatics Core Request form. 
+
+<p>
+Please enter your contact information and a description of the assistance you require, and an email will be forwarded to our support request tracker.
+
+<form action="/cgi-bin/email_bioinformaticshelp" method="POST" enctype="multipart/form-data">
+
+Name: <input name="name"> <small>Required</small><br>
+
+Principal Investigator: <input name="pi"> <small>Required</small><br>
+
+Email address: <input name="email"> <small>Required</small><br>
+
+Phone: <input name="phone"><br>
+
+<p>
+To avoid robotic spam, we are employing a simple Turing test to confirm that you are, indeed, a <i>human</i> with a minimal amount of scientific knowledge and/or humor. <br><small>(Besides, Captcha images are mildly annoying and not as much fun.)</small><br>
+I am a 
+<select name="genus">
+<option value="Roboticus">Roboticus</option>
+<option value="Automaticus">Automaticus</option>
+<option value="Computicus">Computicus</option>
+<option value="Abacus">Abacus</option>
+<option value="Pan">Pan</option>
+<option value="Pongo">Pongo</option>
+<option value="Denisova">Denisova</option>
+<option value="Sasquatch">Sasquatch</option>
+<option value="Homo">Homo</option>
+<option value="Android">Android</option>
+</select> 
+<select name="species">
+<option value="spammus">spammus</option>
+<option value="smartus">smartus</option>
+<option value="intelligentsia">intelligentsia</option>
+<option value="hominin">hominin</option>
+<option value="pygmaeus">pygmaeus</option>
+<option value="troglodytes">troglodytes</option>
+<option value="americum">americum</option>
+<option value="floresiensis">floresiensis</option>
+<option value="neanderthalensis">neanderthalensis</option>
+<option value="sapiens">sapiens researchia</option>
+<option value="sapiens">sapiens professorii</option>
+<option value="sapiens">sapiens studentius</option>
+<option value="spammus">sapiens spammus</option>
+<option value="spammus">sapiens lowlifius</option>
+</select><br>
+
+<p>
+If your analysis is associated with a GNomEx Experiment Request or Analysis number, please provide that here. Examples include 1234R or A5678.<br>
+GNomEx ID: <input name="gnomexID"><br>
+
+<p>
+Please enter a category for the type of assistance you require.<br>
+Category: <select name="category">
+<option></option>
+<option value="ChIPSeq analysis">ChIP sequence analysis</option>
+<option value="RNASeq analysis">RNA sequence analysis</option>
+<option value="BisSeq analysis">Bisulfite sequence analysis</option>
+<option value="Exome analysis">Exome sequence analysis</option>
+<option value="Microarray analysis">Microarray expression analysis</option>
+<option value="Recommendations">Recommendations for design or analysis</option>
+<option value="Publication help">Help preparing for publication</option>
+<option value="New software request">Custom software design</option>
+<option value="Custom analysis">Other</option>
+</select> <small>Required</small><br>
+
+<p>
+Please include any additional details you can provide.<br>
+<textarea rows="10" cols="80" name="details"></textarea><br>
+
+<p>
+If you need to submit a <i>small</i> file, you may do so here. For example, a screen snapshot, error report, Excel spreadsheet, etc. Do NOT attach large files, such as fastq, sam, bam, useq, etc (they won't be accepted). Rather, provide a location where the file can be obtained, for example on GNomEx or a path on one of our community servers, such as hci-moab.<br>
+<input type="file" name="userfile">
+
+<p>
+Click submit to send an email to the Bioinformatics Core. You should receive an automatic response with a request number.<br>
+
+<input type="submit" value="Submit">
+</form>
+
+</body>
+</html>
