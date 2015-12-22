@@ -13,7 +13,9 @@ In other words, simple, crude spam filter.
 
 =head1 INSTALL
 
-	# edit etc/RT_SiteConfig.pm
+Install module into C<lib/RT/Interface/Email/> under the RT4 base directory.
+
+Edit C<etc/RT_SiteConfig.pm> as below.
 
 	Set(@Plugins,(qw/
 		RT::Interface::Email::HCIWhiteListFilter
@@ -30,6 +32,9 @@ In other words, simple, crude spam filter.
 The pass value is an array of C<qr> regex expressions for acceptable domains.
 
 If you want an error message emailed back to the sender, put in a message.
+
+You can see what is blocked by viewing the apache error log, usually 
+C</var/log/httpd/error_log>.
 
 =head1 CREDIT
 
