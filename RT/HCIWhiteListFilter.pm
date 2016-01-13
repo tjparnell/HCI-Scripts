@@ -127,17 +127,17 @@ sub GetCurrentUser {
 				To			=> $ErrorsTo,
 				Subject		=> "Permission denied : " . $head->get('Subject'),
 				Explanation => $message,
-# 					MIMEObj		=> $args{'Message'}
+# 				MIMEObj		=> $args{'Message'},
 			);
 			# don't contribute to email flood by attaching the original email
 		}
 
 		# halt further email processing to block creation of a ticket.
-		$RT::Logger->info("HCIWhiteListFilter: [error] email from $address - HALT");
+		$RT::Logger->info("HCIWhiteListFilter: BLOCKED email from $address - HALT");
 		return ( $args{CurrentUser}, -1 );
 	}
 
-	$RT::Logger->info("HCIWhiteListFilter: email domains ok");
+	$RT::Logger->info("HCIWhiteListFilter: ACCEPT email from $address - OK");
 	return @ret;
 }
 
