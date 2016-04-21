@@ -1,17 +1,30 @@
 #!/usr/bin/env perl
 
+# Timothy J. Parnell, PhD
+# Huntsman Cancer Institute
+# University of Utah
+# Salt Lake City, UT 84112
+#  
+# This package is free software; you can redistribute it and/or modify
+# it under the terms of the Artistic License 2.0.  
+# 
+# Updated versions of this file may be found in the repository
+# https://github.com/tjparnell/HCI-Scripts/
+
 use strict;
 use Getopt::Long;
 use Bio::ToolBox::Data;
 use Bio::ToolBox::utility;
-
+my $VERSION = 1.1;
 
 ### Documentation
 unless (@ARGV) {
 	print <<END;
 
 A script to compare the cells from two data tables and write a third data table.
-The cells can be added, subtracted, multiplied, or divided.
+The cells can be added, subtracted, multiplied, or divided. 
+Alternatively, the minimum or maximum (either as is or absolute values) can be 
+taken.
 
 A new table will be written.
 
@@ -20,7 +33,7 @@ Usage: $0 --t1 <file> --t2 <file> --out <file>
 Required: 
   --t1 <file>       1st table file
   --t2 <file>       2nd table file
-  --method <text>   One of [add|subtract|multiply|divide]
+  --method <text>   One of [add|subtract|multiply|divide|min|max|absmin|absmax]
   --out <file>      The output file.
 
 Optional: 
@@ -86,8 +99,36 @@ elsif ($method eq 'divide') {
 		return $n1 / $n2;
 	}
 }
+elsif ($method eq 'min') {
+	$function = sub {
+		my $n1 = $_[0] eq '.' ? 0 : $_[0];
+		my $n2 = $_[1] eq '.' ? 0 : $_[1];
+		return $n1 >= $n2 ? $n2 : $n1;
+	}
+}
+elsif ($method eq 'max') {
+	$function = sub {
+		my $n1 = $_[0] eq '.' ? 0 : $_[0];
+		my $n2 = $_[1] eq '.' ? 0 : $_[1];
+		return $n1 >= $n2 ? $n1 : $n2;
+	}
+}
+elsif ($method eq 'absmin') {
+	$function = sub {
+		my $n1 = $_[0] eq '.' ? 0 : $_[0];
+		my $n2 = $_[1] eq '.' ? 0 : $_[1];
+		return abs($n1) >= abs($n2) ? $n2 : $n1;
+	}
+}
+elsif ($method eq 'absmax') {
+	$function = sub {
+		my $n1 = $_[0] eq '.' ? 0 : $_[0];
+		my $n2 = $_[1] eq '.' ? 0 : $_[1];
+		return abs($n1) >= abs($n2) ? $n1 : $n2;
+	}
+}
 else {
-	die "unknown method '$method'! Must use one of [add|subtract|multiply|divide]\n";
+	die "unknown method '$method'! Must use one of [add|subtract|multiply|divide|min|max]\n";
 }
 
 
@@ -130,7 +171,7 @@ unless (@indices) {
 ### Generate output 
 my $outData = $t1Data->duplicate;
 foreach my $column (@indices) {
-	$outData->metadata($column, '$method\_Calculation', join(',', 
+	$outData->metadata($column, $method . '_Calculation', join(',', 
 		't1:' . $t1Data->basename,
 		't2:' . $t2Data->basename,
 	) );
