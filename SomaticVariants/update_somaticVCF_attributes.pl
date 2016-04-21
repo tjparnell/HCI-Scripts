@@ -1,11 +1,20 @@
 #!/usr/bin/env perl
 
+# Timothy J. Parnell, PhD
+# Huntsman Cancer Institute
+# University of Utah
+# Salt Lake City, UT 84112
+#  
+# This package is free software; you can redistribute it and/or modify
+# it under the terms of the Artistic License 2.0.  
+# 
+# Updated versions of this file may be found in the repository
+# https://github.com/tjparnell/HCI-Scripts/
+
 use strict;
 use Getopt::Long;
-# use Data::Dumper;
-use Bio::ToolBox::Data;
-	# the new Bio::ToolBox version has a VCF attributes method call, but 
-	# this is older script, so we're getting the attributes manually here
+use Bio::ToolBox::Data 1.34;
+my $VERSION = 1.2;
 
 unless (@ARGV) {
 	print <<END;
@@ -21,8 +30,8 @@ A script to fix and standardize sample attributes in somatic VCF files.
 Usage: $0 -i <input.vcf> 
 Options: 
   -o <output.vcf>       default is to overwrite input!!!!
-  -n <NAME>             Normal sample name, default NORMAL
   -t <NAME>             Tumor sample name, default TUMOR
+  -n <NAME>             Normal sample name, default NORMAL
   -m                    flag to minimize to just three sample attributes: GT:AD:FA
 END
 	exit;
@@ -30,235 +39,285 @@ END
 
 my $file;
 my $outfile;
-my $normName = 'NORMAL';
-my $tumorName = 'TUMOR';
+my $nName = 'NORMAL';
+my $tName = 'TUMOR';
 my $minimize;
 
 GetOptions( 
 	'i=s'       => \$file, # input vcf
 	'o=s'       => \$outfile, # output vcf
-	'n=s'       => \$normName, # normal name
-	't=s'       => \$tumorName, # tumor name
+	'n=s'       => \$nName, # normal name
+	't=s'       => \$tName, # tumor name
 	'm!'        => \$minimize, # throw away extra attributes
 ) or die "bad options!\n";
 
+# unnecessary INFO fields to remove when minimizing
+my @noINFO = qw(IC IHP NT OVERLAP QSI QSI_NT RC RU SGT SVTYPE TQSI TQSI_NT MQ0 SOMATIC VT DB .);
 
+# input file
 my $Data = Bio::ToolBox::Data->new(in => $file) or 
 	die "unable to open $file!\n";
+die "file is not VCF!!!\n" unless $Data->vcf;
+
+# output file
 $outfile ||= $file;
 $outfile =~ s/\.gz$//i;
 $outfile = $outfile . '.vcf' unless $outfile =~ /\.vcf$/i;
 
-my $info_i = $Data->find_column('INFO');
-my $form_i = $Data->find_column('FORMAT');
-my $norm_i = $Data->find_column($normName);
-my $tumr_i = $Data->find_column($tumorName);
+# sample columns
+my $norm_i = $Data->find_column($nName);
+my $tumr_i = $Data->find_column($tName);
 unless ($norm_i) {
-	die "can not find index for $normName!\n";
+	die "can not find index for $nName!\n";
 }
 unless ($tumr_i) {
-	die "can not find index for $tumorName!\n";
+	die "can not find index for $tName!\n";
 }
 
+# process
 my $iterator = $Data->row_stream;
 while (my $line = $iterator->next_row) {
 	
-	# split values
-	my @formatKeys = split /:/, $line->value($form_i);
-	my @normalVals = split /:/, $line->value($norm_i);
-	my @tumorVals  = split /:/, $line->value($tumr_i);
-	my $number = scalar @formatKeys;
-	warn "format and sample attributes have unequal number of entries for data line " . 
-		$line->seq_id . ":" . $line->start . "\n" if 
-		(scalar @normalVals != $number or scalar @tumorVals != $number);
-	
-	# generate attribute hash for each sample
-	# this could be updated with new version of Bio::ToolBox to do this automatically
-	my %normals = map { $formatKeys[$_] => $normalVals[$_] } (0 .. $#formatKeys);
-	my %tumors  = map { $formatKeys[$_] => $tumorVals[$_] } (0 .. $#formatKeys);
-	my %info = 	map { $_->[0] => defined $_->[1] ? $_->[1] : 1 } 
-				map { [split(/=/, $_)] } 
-				split(/;/, $line->value($info_i));
-# 	printf "Data for variant %s:%s\nINFO %s\nFORMAT %s\nNORMAL %s\nTUMOR %s\nNORMALHASH %s\nTUMORHASH %s\n", 
-# 		$line->seq_id, $line->start, Dumper(\%info), Dumper(\@formatKeys), 
-# 		Dumper(\@normalVals), Dumper(\@tumorVals), Dumper(\%normals), Dumper(\%tumors);
+	my $att = $line->vcf_attributes;
 	
 	# Strelka data tier and variant type, used in both FA and depth calculations
 	my ($tier, $indel);
 	
 	### check for FA or FREQ
-	unless (exists $normals{FA} or exists $normals{FREQ}) {
+	unless (exists $att->{$nName}{FA} or exists $att->{$nName}{FREQ}) {
 		# No frequency of alternate
 		
 		# calculate FREQ attribute
 		my ($normal_FA, $tumor_FA);
-		if (exists $normals{DP4}) {
+		if (exists $att->{$nName}{DP4}) {
 			# DP4 = ref-forward bases, ref-reverse, alt-forward and alt-reverse bases
-			my ($rf, $rr, $af, $ar) = split /,/, $normals{DP4};
+			my ($rf, $rr, $af, $ar) = split ',', $att->{$nName}{DP4}, 4;
 			$normal_FA = sprintf "%0.2f", ($af + $ar) / ($rf + $rr + $af + $ar);
-			($rf, $rr, $af, $ar) = split /,/, $tumors{DP4};
+			($rf, $rr, $af, $ar) = split ',', $att->{$tName}{DP4}, 4;
 			$tumor_FA = sprintf "%0.2f", ($af + $ar) / ($rf + $rr + $af + $ar);
 		} 
 		
-		elsif (exists $normals{TIR} or exists $normals{TAR}) {
+		elsif (exists $att->{$nName}{TIR} or exists $att->{$nName}{TAR}) {
 			# Strelka attributes
 			
 			# determine data tier and type of indel
-			if (exists $info{TQSI}) {
+			if (exists $att->{INFO}{TQSI}) {
 				# strelka indel
-				$tier = $info{TQSI};
+				$tier = $att->{INFO}{TQSI};
 				$indel = 1;
 			}
-			elsif (exists $info{TQSS}) {
+			elsif (exists $att->{INFO}{TQSS}) {
 				# strelka somatic
-				$tier = $info{TQSS};
+				$tier = $att->{INFO}{TQSS};
 				$indel = 0;
 			}
 			unless ($tier) {
 				# just go with the first data tier 
-				warn "no tier data for data line " . $line->seq_id, ":" , $line->start, "\n";
+				warn sprintf "no tier data for data line %s:%d\n", 
+					$line->seq_id, $line->start;
 				$tier = 1;
 			}
 			
-			# data tier read counts appropriate for somatic variant type
-			my ($nt1, $nt2) = split /,/, $indel ? $normals{TIR} : $normals{TAR};
-			my ($tt1, $tt2) = split /,/, $indel ? $tumors{TIR}  : $tumors{TAR};
+			# get the supporting number of alternate reads based on data tier and 
+			# somatic variant type
+			my ($nt1, $nt2) = split ',', # normal
+								$indel ? $att->{$nName}{TIR} : $att->{$nName}{TAR}, 
+								2;
+			my ($tt1, $tt2) = split ',', # tumor
+								$indel ? $att->{$tName}{TIR} : $att->{$tName}{TAR}, 
+								2;
 			
 			# calculate FREQ based on which data tier was used
+			# using the total depth DP as the denominator
 			if ($tier == 1) {
-				$normal_FA = $normals{DP} ? sprintf "%0.2f", $nt1 / $normals{DP} : 0;
-				$tumor_FA  = $tumors{DP} ? sprintf "%0.2f", $tt1 / $tumors{DP} : 0;
+				$normal_FA = $att->{$nName}{DP} ? 
+					sprintf "%0.2f", $nt1 / $att->{$nName}{DP} : 0;
+				$tumor_FA  = $att->{$tName}{DP} ? 
+					sprintf "%0.2f", $tt1 / $att->{$tName}{DP} : 0;
 			} elsif ($tier == 2) {
-				$normal_FA = $normals{DP2} ? sprintf "%0.2f", $nt2 / $normals{DP2} : 0;
-				$tumor_FA  = $tumors{DP2} ? sprintf "%0.2f", $tt2 / $tumors{DP2} : 0;
+				$normal_FA = $att->{$nName}{DP2} ? 
+					sprintf "%0.2f", $nt1 / $att->{$nName}{DP2} : 0;
+				$tumor_FA  = $att->{$tName}{DP2} ? 
+					sprintf "%0.2f", $tt1 / $att->{$tName}{DP2} : 0;
 			} else {
-				warn "unknown tier '$tier' for data line " . $line->seq_id, ":" , $line->start, "\n";
+				warn sprintf "unknown tier '$tier' for data line %s:%d\n",
+					$line->seq_id, $line->start;
 				$normal_FA = 0;
 				$tumor_FA  = 0;
 			}
-		} else {
-			warn "missing read depth identifiers for data line " . $line->seq_id, ":" , $line->start, "\n";
+		} 
+		
+		elsif (exists $att->{$nName}{AD}) {
+			# AD = ref bases, alt bases
+			my ($ref, $alt) = split ',', $att->{$nName}{AD}, 2;
+			$normal_FA = sprintf "%0.2f", $alt / ($ref + $alt);
+			($ref, $alt) = split ',', $att->{$tName}{AD}, 2;
+			$tumor_FA = sprintf "%0.2f", $alt / ($ref + $alt);
+		} 
+		
+		else {
+			warn "missing read depth identifiers for data line %s:%d\n",
+				$line->seq_id, $line->start;
 			$normal_FA = 0;
 			$tumor_FA  = 0;
 		}
 		
 		# push the new FA attribute
-		$normals{FA} =  $normal_FA;
-		$tumors{FA} = $tumor_FA;
-		push @formatKeys, 'FA';
-		push @normalVals, $normal_FA;
-		push @tumorVals, $tumor_FA;
+		$att->{$nName}{FA} = $normal_FA;
+		$att->{$tName}{FA} = $tumor_FA;
 	}
 	
 	### Check for GT
-	unless (exists $normals{GT}) {
+	unless (exists $att->{$nName}{GT}) {
 		# stupid strelka doesn't put in genotype information
 		# since GT is usually first in attributes, we'll put it there
-		unshift @formatKeys, 'GT';
 		# normal genotype use the info NT key
-		if ($info{NT} =~ /ref/i) {
-			unshift @normalVals, '0/0';
-			$normals{GT} = '0/0';
+		if ($att->{INFO}{NT} =~ /ref/i) {
+			$att->{$nName}{GT} = '0/0';
 		}
-		elsif ($info{NT} =~ /het/i) {
+		elsif ($att->{INFO}{NT} =~ /het/i) {
 			# info value SGT=ref->hom
-			unshift @normalVals, '0/1';
-			$normals{GT} = '0/1';
+			$att->{$nName}{GT} = '0/1';
 		}
-		elsif ($info{NT} =~ /hom$/i) {
+		elsif ($att->{INFO}{NT} =~ /hom$/i) {
 			# info value SGT=ref->hom
-			unshift @normalVals, '1/1';
-			$normals{GT} = '1/1';
+			$att->{$nName}{GT} = '1/1';
 		}
 		else {
-			warn "no Normal genotype key NT for data line " . $line->seq_id, ":" , $line->start, "\n";
-			unshift @normalVals, './.';
-			$normals{GT} = './.';
+			warn sprintf "no Normal genotype key NT for data line %s:%d\n", 
+				$line->seq_id, $line->start;
+			$att->{$nName}{GT} = './.';
 		}
 		
 		# tumor genotype uses the info key SGT
-		if ($info{SGT} =~ /het$/i) {
+		if ($att->{INFO}{SGT} =~ /het$/i) {
 			# info value SGT=ref->het;
-			unshift @tumorVals, '0/1';
-			$tumors{GT} = '0/1';
+			$att->{$tName}{GT} = '0/1';
 		}
-		elsif ($info{SGT} =~ /hom$/i) {
+		elsif ($att->{INFO}{SGT} =~ /hom$/i) {
 			# info value SGT=ref->hom
-			unshift @tumorVals, '1/1';
-			$tumors{GT} = '1/1';
+			$att->{$tName}{GT} = '1/1';
 		}
 		else {
-			warn "no Tumor genotype key SGT for data line " . $line->seq_id, ":" , $line->start, "\n";
-			unshift @tumorVals, './.';
-			$tumors{GT} = './.';
+			warn sprintf "no Normal genotype key SGT for data line %s:%d\n", 
+				$line->seq_id, $line->start;
+			$att->{$tName}{GT} = './.';
 		}
 	}
 	
 	### Check for depth
-	if (not exists $normals{AD} and not exists $normals{DP4}) {
+	if (not exists $att->{$nName}{AD} and not exists $att->{$nName}{DP4}) {
 		# this should only be for the Strelka stuff
 		$tier ||= 1; # in case it wasn't defined for some reason
 		
 		# reference count
-		my $normalRefCount = $tier == 1 ? $normals{DP} : $normals{DP2};
-		my $tumorRefCount  = $tier == 1 ? $tumors{DP}  : $tumors{DP2};
+		my $normalRefCount = $tier == 1 ? $att->{$nName}{DP} : $att->{$nName}{DP2};
+		my $tumorRefCount  = $tier == 1 ? $att->{$tName}{DP} : $att->{$tName}{DP2};
 		
 		# alternate count
 		my ($normalAltCount, $tumorAltCount);
 			# we'll need to split the appropriate FORMAT attribute into tier1,tier2
 			# then take the appropriate index for the tier
 		if ($indel) {
-			$normalAltCount = (split ',', $normals{TIR})[ $tier - 1 ];
-			$tumorAltCount  = (split ',', $tumors{TIR})[ $tier - 1 ];
+			$normalAltCount = (split ',', $att->{$nName}{TIR}, 2)[ $tier - 1 ];
+			$tumorAltCount  = (split ',', $att->{$tName}{TIR}, 2)[ $tier - 1 ];
 		} else {
-			$normalAltCount = (split ',', $normals{TAR})[ $tier - 1 ];
-			$tumorAltCount  = (split ',', $tumors{TAR})[ $tier - 1 ];
+			$normalAltCount = (split ',', $att->{$nName}{TAR}, 2)[ $tier - 1 ];
+			$tumorAltCount  = (split ',', $att->{$tName}{TAR}, 2)[ $tier - 1 ];
 		}
 		
 		# put back
-		$normals{AD} = "$normalRefCount,$normalAltCount";
-		$tumors{AD} = "$tumorRefCount,$tumorAltCount";
-		push @formatKeys, 'AD';
-		push @normalVals, "$normalRefCount,$normalAltCount";
-		push @tumorVals, "$tumorRefCount,$tumorAltCount";
+		$att->{$nName}{AD} = "$normalRefCount,$normalAltCount";
+		$att->{$tName}{AD} = "$tumorRefCount,$tumorAltCount";
 	}
-	elsif (not exists $normals{AD} and exists $normals{DP4}) {
+	elsif (not exists $att->{$nName}{AD} and exists $att->{$nName}{DP4}) {
 		# this should be for SomaticSniper 
 		# this is a temporary fix, probably should not be kept permanently
 		# convert AD ref,alt from DP4 
-		my @nC = split ",", $normals{DP4};
-		my @tC = split ",", $tumors{DP4};
-		my $normalCount = sprintf("%s,%s", $nC[0] + $nC[1], $nC[2] + $nC[3]);
-		my $tumorCount = sprintf("%s,%s", $tC[0] + $tC[1], $tC[2] + $tC[3]);
+		my @nC = split ',', $att->{$nName}{DP4}, 4;
+		my @tC = split ',', $att->{$tName}{DP4}, 4;
+		my $normalCount = sprintf("%d,%d", $nC[0] + $nC[1], $nC[2] + $nC[3]);
+		my $tumorCount = sprintf("%d,%d", $tC[0] + $tC[1], $tC[2] + $tC[3]);
 		
-		$normals{AD} = $normalCount;
-		$tumors{AD} = $tumorCount;
-		push @formatKeys, 'AD';
-		push @normalVals, $normalCount;
-		push @tumorVals, $tumorCount;
+		$att->{$nName}{AD} = $normalCount;
+		$att->{$tName}{AD} = $tumorCount;
 	}
 	
 	
 	
 	# update the line
 	if ($minimize) {
-		$line->value($form_i, join(':', qw(GT AD FA)) );
-		$line->value($norm_i, join(':', map {$normals{$_}} qw(GT AD FA)) );
-		$line->value($tumr_i, join(':', map {$tumors{$_}} qw(GT AD FA)) );
-		# update INFO field
-		foreach (qw(IC IHP NT OVERLAP QSI QSI_NT RC RU SGT SVTYPE TQSI TQSI_NT MQ0 SOMATIC VT)) {
-			delete $info{$_} if exists $info{$_};
+		
+		# format column
+		$line->value(8, join(':', qw(GT AD FA)) );
+		
+		# sample columns
+		$line->value($norm_i, join(':', map {$att->{$nName}{$_}} qw(GT AD FA)) );
+		$line->value($tumr_i, join(':', map {$att->{$tName}{$_}} qw(GT AD FA)) );
+		
+		# update INFO column
+		foreach my $id (@noINFO) {
+			# these are the extraneous fields found in the somatic callers I've been using
+			# keep anything that's not in this list
+			if (exists $att->{INFO}{$id}) {
+				delete $att->{INFO}{$id};
+			}
 		}
+		
 		# regenerate INFO field with remainder
-		$line->value($info_i, 
-			join(";", map { join("=", $_, $info{$_}) } sort {$a cmp $b} keys %info) );
+		my $info = join(';', 
+			map { join('=', $_, $att->{INFO}{$_}) } 
+			sort {$a cmp $b} 
+			keys %{$att->{INFO}}
+		);
+		$info ||= '.'; # sometimes we have nothing left
+		$line->value(7, $info);
 	}
 	else {
-		$line->value($form_i, join(":", @formatKeys));
-		$line->value($norm_i, join(":", @normalVals));
-		$line->value($tumr_i, join(":", @tumorVals));
+		# we can skip the INFO column since we don't modify that
+		
+		# determine the format order, alphabetize since we can't maintain original order
+		my @formatKeys = qw(GT); # genotype must come first
+		foreach (sort {$a cmp $b} keys %{ $att->{$nName} }) {
+			push @formatKeys, $_ unless $_ eq 'GT';
+		}
+		$line->value(8, join(":", @formatKeys));
+		$line->value($norm_i, join(":", map { $att->{$nName}{$_} } @formatKeys ) );
+		$line->value($tumr_i, join(":", map { $att->{$tName}{$_} } @formatKeys ) );
 	}
 }
+
+# update the VCF metadata comment lines as necessary
+if ($minimize) {
+	my @comments = $Data->comments; # returns an array
+	my @to_delete;
+	
+	# format metadata lines
+	foreach (my $i = 0; $i < scalar @comments; $i++) {
+		if ($comments[$i] =~ /^##FORMAT/) {
+			push @to_delete, $i unless $comments[$i] =~ /ID=(?:GT|AD|FA)/;
+		}
+	}
+	
+	# info metadata lines
+	foreach my $id (@noINFO) {
+		# these are the extraneous fields found in the somatic callers I've been using
+		# keep anything that's not in this list
+		foreach (my $i = 0; $i < scalar @comments; $i++) {
+			if ($comments[$i] =~ /^##INFO/) {
+				push @to_delete, $i if $comments[$i] =~ /ID=$id/;
+			}
+		}
+	}
+	
+	# update VCF metadata comment lines
+	foreach (sort {$b <=> $a} @to_delete) {
+		# must reverse sort to avoid messing up other lines
+		$Data->delete_comment($_);
+	}
+}
+
+
 
 # write the file
 # do not gzip, user should use bgzip and index themselves
