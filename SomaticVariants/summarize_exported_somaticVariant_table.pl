@@ -5,7 +5,7 @@ use Getopt::Long;
 use Bio::ToolBox::Data;
 use Bio::ToolBox::utility qw(parse_list ask_user_for_index format_with_commas);
 
-my $VERSION = 2;
+my $VERSION = 3;
 
 =head1 CHANGES
 version 2
@@ -20,13 +20,21 @@ version 2
     * Allows counting of one or more sample classes based on a text substring 
       in the sample identifiers.
 
+version 3
+	* Add support for VEP annotation tables
+
 =cut
 
 unless (@ARGV) {
 	print <<END;
 
 Summarize Somatic variant tables into gene hit count tables.  
-Assume tables are from USeq VCFReporter text output. 
+
+Tables from USeq VCFReporter text output are supported.
+
+Tables from VEP should also be supported. Filter on the Pick'ed 
+consequence if more than one is reported. It is best to use tables 
+previously filtered for damaging consequences.
 
 The output table lists all of the genes with 1 or more variant, and 
 lists how many and which samples hit each gene. Hits are categorized by 
@@ -36,7 +44,9 @@ are repeatedly hit.
 
 Tables by default use the Ensembl identifier, or it can optionally use 
 the RefSeq gene identifier. The columns EnsemblName and EnsemblVarType, 
-or RefSeqName and RefSeqVarType, are assumed to be present. 
+or RefSeqName and RefSeqVarType, are assumed to be present for the USeq 
+VCFReporter tables. For VEP tables, it uses the SYMBOL and Consequence 
+columns.
 
 If there are multiple sample classes and you want individual counts for 
 each sample class, provide one or more text substrings to identify and 
@@ -90,10 +100,17 @@ foreach my $file (@ARGV) {
 		die "unable to open '$file'\n";
 	
 	# identify columns
-	my $ensgene_i = $Data->find_column('EnsemblName');
-	my $refgene_i = $Data->find_column('RefSeqName');
-	my $ensvar_i  = $Data->find_column('EnsemblVarType');
-	my $refvar_i  = $Data->find_column('RefSeqVarType');
+	my $ensgene_i = $Data->find_column('EnsemblName') || 
+					$Data->find_column('SYMBOL') || 
+					$Data->find_column('Gene') || undef;
+	my $refgene_i = $Data->find_column('RefSeqName') ||
+					$Data->find_column('SYMBOL') || 
+					$Data->find_column('Gene') || undef;
+	my $ensvar_i  = $Data->find_column('EnsemblVarType') ||
+					$Data->find_column('Consequence');
+	my $refvar_i  = $Data->find_column('RefSeqVarType') ||
+					$Data->find_column('Consequence');
+	my $location_i= $Data->find_column('Location');
 	
 	# check
 	if ($do_refseq and not defined $refgene_i and not defined $refvar_i) {
@@ -152,6 +169,9 @@ foreach my $file (@ARGV) {
 	
 		# add each sample information to the gene hash
 		my $start = $row->start;
+		if (not $start and $location_i) {
+			(undef, $start) = split(':', $row->value($location_i));
+		}
 		foreach my $i (@samples) {
 			my $sampleid = $Data->name($i); # column name is the sample ID
 			my ($allele, $gt, undef) = split(/:/, $row->value($i)); 
@@ -163,15 +183,17 @@ foreach my $file (@ARGV) {
 			next if $gt eq '0/0';
 		
 			# determine variant category
-			if ($variant =~ /^nonsynonymous/i) {
+			if ($variant =~ /nonsynonymous/i) {
 				push @{ $hash->{$gene}{nonsynonymous_SNV} }, "$sampleid:$start";
-			} elsif ($variant =~ /stoploss/) {
+			} elsif ($variant =~ /missense.?variant/i) {
+				push @{ $hash->{$gene}{nonsynonymous_SNV} }, "$sampleid:$start";
+			} elsif ($variant =~ /stop.?loss/) {
 				push @{ $hash->{$gene}{stoploss} }, "$sampleid:$start";
-			} elsif ($variant =~ /stopgain/) {
+			} elsif ($variant =~ /stop.?gain/) {
 				push @{ $hash->{$gene}{stopgain} }, "$sampleid:$start";
-			} elsif ($variant =~ /^nonframeshift/) {
+			} elsif ($variant =~ /non.?frame.?shift/) {
 				push @{ $hash->{$gene}{nonframeshift_indel} }, "$sampleid:$start";
-			} elsif ($variant =~ /^frameshift/) {
+			} elsif ($variant =~ /frame.?shift/) {
 				push @{ $hash->{$gene}{frameshift} }, "$sampleid:$start";
 			} else {
 				push @{ $hash->{$gene}{other} }, "$sampleid:$start";
