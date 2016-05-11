@@ -14,8 +14,8 @@ Files can be gzipped.
 
 NOTE: More than option may be specified! The options below are the order in 
 which the score is manipulated. If they are not in the order you want, you 
-may have to pipe to sequential instances. Use 'stdin' and 'stdout' for 
-filenames.
+may have to pipe to sequential instances. Use 'stdin' and 'stdout' for filenames.
+Use an equal sign do define options with negative values, e.g. --mult=-1
 
 Usage: $0 [options] -i <file1.wig> -o <file1.out.wig>
 Options: 
@@ -24,8 +24,7 @@ Options:
                    Optional if all you want is to calculate statistics.
   --null           Convert null, NA, N/A, NaN, inf values to 0
   --delog <int>    Delog values of base [int], usually 2 or 10
-  --flip           Flip the sign of the score value. All negative scores 
-                   become positive, and vice versa. 
+  --abs            Convert to the absolute value 
   --mult <float>   Multiply score by the given value
   --add <float>    Add the given value to the score
   --log [2|10]     Convert to log2 or log10. Scores of 0 are left as 0.
@@ -44,7 +43,7 @@ my $infile;
 my $outfile;
 my $doNull = 0;
 my $deLogValue;
-my $doFlip = 0;
+my $doAbsolute = 0;
 my $multiplyValue;
 my $addValue;
 my $logValue;
@@ -58,7 +57,7 @@ GetOptions(
 	'output=s'      => \$outfile,
 	'null!'         => \$doNull,
 	'delog=i'       => \$deLogValue,
-	'flip!'         => \$doFlip,
+	'abs!'          => \$doAbsolute,
 	'multiply=f'    => \$multiplyValue,
 	'add=f'         => \$addValue,
 	'log=i'         => \$logValue,
@@ -124,32 +123,37 @@ my $stats = {
 my $count = 0;
 my $span = 1;
 while (my $line = $infh->getline) {
-	$line =~ s/[\r\n]+$//; # strip all line endings
-	my @data = split /\s+/, $line;
-	
 	# a track line
-	if ($data[0] =~ /^track|browser/i) {
-		$outfh->print("$line\n") if $outfh;
+	if ($line =~ /^(?:track|browser)/i) {
+		$outfh->print($line) if $outfh;
+		next;
 	}
 	
 	# a step definition line
-	elsif ($data[0] =~ /^variablestep|fixedstep/i) { 
+	elsif ($line =~ /^(?:variable|fixed)/i) { 
 		if ($line =~ /span=(\d+)/i) {
 			# capture span size if present
 			$span = $1;
 		}
-		$outfh->print("$line\n") if $outfh;
+		$outfh->print($line) if $outfh;
+		next;
 	} 
 	
 	# comment line
-	elsif ($data[0] =~ /^#/) {
-		$outfh->print("$line\n") if $outfh;
+	elsif ($line =~ /^#/) {
+		$outfh->print($line) if $outfh;
+		next;
 	}
 	
+	# split line
+	$line =~ s/[\r\n]+$//; # strip all line endings
+	my @data = split /\s+/, $line; # unfortunately could be either space or tab delimited
+	
 	# a bedGraph data line
-	elsif (scalar @data == 4) {
+	if (scalar @data == 4) {
 		$data[3] = process_score($data[3]);
-		$outfh->print(join("\t", @data) . "\n") if (defined $data[3] and $outfh);
+		$outfh->printf("%s\t%d\t%d\t%s\n", $data[0], $data[1], $data[2], $data[3]) 
+			if (defined $data[3] and $outfh);
 		$count++;
 		process_bdg_stats(@data) if $doStats;
 	} 
@@ -157,7 +161,7 @@ while (my $line = $infh->getline) {
 	# a variableStep data line
 	elsif (scalar @data == 2) { 
 		$data[1] = process_score($data[1]);
-		$outfh->print(join(" ", @data) . "\n") if (defined $data[1] and $outfh);
+		$outfh->printf("%d %s\n", $data[0], $data[1]) if (defined $data[1] and $outfh);
 		$count++;
 		process_step_stats($data[1]) if $doStats;
 	} 
@@ -165,7 +169,7 @@ while (my $line = $infh->getline) {
 	# a fixedStep data line
 	elsif (scalar @data == 1) { 
 		$data[0] = process_score($data[0]);
-		$outfh->print($data[0] . "\n") if (defined $data[0] and $outfh);
+		$outfh->printf("%s\n",$data[0]) if (defined $data[0] and $outfh);
 		$count++;
 		process_step_stats($data[0]) if $doStats;
 	}
@@ -209,7 +213,7 @@ sub process_score {
 	my $v = shift; # score
 	if ($doNull and $v =~ /^(?:n.?[na])|(?:\-?inf)/i) {$v = 0}
 	if ($deLogValue) {$v = $deLogValue ** $v}
-	if ($doFlip) {$v *= -1}
+	if ($doAbsolute) {$v = abs($v)}
 	if ($multiplyValue) {$v *= $multiplyValue}
 	if ($addValue) {$v += $addValue}
 	if ($logValue) {$v = $v == 0 ? 0 : log($v) / $logValue}
@@ -222,15 +226,14 @@ sub process_score {
 
 sub process_bdg_stats {
 	return unless defined $_[3];
-	for ($_[1] + 1 .. $_[2]) {
-		$stats->{count} += 1;
-		$stats->{sumData} += $_[3];
-		$stats->{sumSquares} += $_[3] ** 2;
-		$stats->{minVal} = $_[0] if not defined $stats->{minVal};
-		$stats->{maxVal} = $_[0] if not defined $stats->{maxVal};
-		$stats->{minVal} = $_[3] if $_[3] < $stats->{minVal};
-		$stats->{maxVal} = $_[3] if $_[3] > $stats->{maxVal};
-	}
+	my $length = $_[2] - $_[1];
+	$stats->{count} += $length;
+	$stats->{sumData} += ($length * $_[3]);
+	$stats->{sumSquares} += ( ($_[3] ** 2) * $length );
+	$stats->{minVal} = $_[3] if not defined $stats->{minVal};
+	$stats->{minVal} = $_[3] if $_[3] < $stats->{minVal};
+	$stats->{maxVal} = $_[3] if not defined $stats->{maxVal};
+	$stats->{maxVal} = $_[3] if $_[3] > $stats->{maxVal};
 }
 
 sub process_step_stats {
