@@ -6,7 +6,8 @@ use Bio::ToolBox::Data::Stream;
 unless (@ARGV) {
 	print <<HELP;
 
-filter a single sample VCF file by it's frequency of alt/ref
+Filter a single sample VCF file by it's frequency of alternate reads. 
+Keeps all variants that are equal or greater to the given frequency threshold.
 
 Usage: $0 <FREQ> <input.vcf> <output.vcf>
 
@@ -17,7 +18,7 @@ HELP
 	exit;
 }
 
-my $freq = shift @ARGV;
+my $cutoff = shift @ARGV;
 my $file = shift @ARGV;
 my $outfile = shift @ARGV;
 
@@ -38,16 +39,20 @@ my $passCount = 0;
 my $failCount = 0;
 while (my $row = $Stream->next_row) {
 	my $attrib = $row->vcf_attributes;
-	my $ad = $attrib->{9}{AD} || undef;
-	if ($ad) {
+	my $freq = $attrib->{9}{FREQ} || $attrib->{9}{FA} || undef;
+	if ($freq =~ /%$/) {
+		# reported as actual percentage, convert to floating point value
+		$freq =~ s/%$//;
+		$freq /= 100;
+	}
+	if (not defined $freq) {
+		my $ad = $attrib->{9}{AD} || undef;
 		my ($ref, $alt) = split /,/, $ad;
-		if ( ($alt/$ref) >= $freq) {
-			$Out->write_row($row);
-			$passCount++;
-		}
-		else {
-			$failCount++;
-		}
+		$freq = $ref ? ($alt/($alt + $ref)) : 0;
+	}
+	if ( $freq >= $cutoff) {
+		$Out->write_row($row);
+		$passCount++;
 	}
 	else {
 		$failCount++;
