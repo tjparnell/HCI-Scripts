@@ -13,7 +13,7 @@
 
 use strict;
 use Getopt::Long;
-use Bio::ToolBox::Data;
+use Bio::ToolBox::Data '1.40';
 
 my $VERSION = 1.0;
 
@@ -69,15 +69,13 @@ die "$vcffile is not a VCF file!\n" unless $vcfData->vcf;
 my @samples = (9 .. $vcfData->last_column);
 my @sampleNames = map {$vcfData->name($_)} @samples;
 my %sampleInfo;
-while (my $row = $vcfData->next_row) {
+$vcfData->iterate(\&store_sample_data);
 	# vep does screwy things with the start position and alternate allele 
 	# and does not take what the VCF simply provides
 	# therefore, we have to mimic VEP and screw with these values
 	
 	# we offload this to a separate subroutine so that we can iteratively 
 	# handle multiple alternate alleles
-	store_sample_data($row);
-}
 $vcfData->close_fh;
 
 
@@ -89,7 +87,7 @@ my $Data = Bio::ToolBox::Data->new(file => $infile) or
 
 # add new columns
 my $last = $Data->last_column;
-my @new_i;
+my @new_i; # new column indices to be used later
 foreach (@sampleNames) {
 	push @new_i, $Data->add_column($_);
 }
