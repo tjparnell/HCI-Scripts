@@ -13,26 +13,33 @@
 
 use strict;
 use Getopt::Long;
-use Bio::ToolBox::Data 1.34;
-my $VERSION = 1.2;
+use Bio::ToolBox::Data '1.40';
+my $VERSION = 1.3;
 
 unless (@ARGV) {
 	print <<END;
 
 A script to fix and standardize sample attributes in somatic VCF files. 
-  - adds missing alternate fraction (FA or FREQ) attribute (Strelka and SomaticSniper)
+Should properly handle somatic VCF files from MuTect, SomaticSniper, 
+Strelka, and VarScan.
+
+It performs the following functions:
+  - adds missing alternate fraction (FA or FREQ) attribute (Strelka and 
+    SomaticSniper). Changes FREQ to FA (VarScan)
   - adds missing genotype GT attribute (Strelka)
-  - adds missing allele depth (AD or DP4) attribute (Strelka)
+  - adds ref,alt allele depth (AD) attribute (Strelka, VarScan)
   - optionally discard excess sample attributes, leaving only GT:AD:FA
-      otherwise merging VCFs from different callers with different sample attributes 
-      into a single VCF often leads to malformed VCF sample records
+    otherwise merging VCFs from different callers with different sample 
+    attributes into a single VCF often leads to malformed VCF sample records
 
 Usage: $0 -i <input.vcf> 
 Options: 
+  -i <input.vcf>        input vcf file, may be gz compressed
   -o <output.vcf>       default is to overwrite input!!!!
   -t <NAME>             Tumor sample name, default TUMOR
   -n <NAME>             Normal sample name, default NORMAL
-  -m                    flag to minimize to just three sample attributes: GT:AD:FA
+  -m                    flag to minimize to just three sample attributes: 
+                        GT:AD:FA
 END
 	exit;
 }
@@ -52,29 +59,28 @@ GetOptions(
 ) or die "bad options!\n";
 
 # unnecessary INFO fields to remove when minimizing
-my @noINFO = qw(IC IHP NT OVERLAP QSI QSI_NT RC RU SGT SVTYPE TQSI TQSI_NT MQ0 SOMATIC VT DB .);
+# this list may need to be updated with keys from other callers
+# not updating will leave behind those INFO fields, not a huge problem
+my @noINFO = qw(IC IHP NT OVERLAP QSI QSI_NT RC RU SGT SVTYPE TQSI TQSI_NT 
+	MQ0 SOMATIC VT DB DP GPV SPV SS SSC AC AF AN .);
+
 
 # input file
 my $Data = Bio::ToolBox::Data->new(in => $file) or 
 	die "unable to open $file!\n";
 die "file is not VCF!!!\n" unless $Data->vcf;
 
+
+
 # output file
 $outfile ||= $file;
 $outfile =~ s/\.gz$//i;
 $outfile = $outfile . '.vcf' unless $outfile =~ /\.vcf$/i;
 
-# sample columns
-my $norm_i = $Data->find_column($nName);
-my $tumr_i = $Data->find_column($tName);
-unless ($norm_i) {
-	die "can not find index for $nName!\n";
-}
-unless ($tumr_i) {
-	die "can not find index for $tName!\n";
-}
+
 
 # process
+my $change_AD_comment = 0; # remember to add the AD header if necessary
 my $iterator = $Data->row_stream;
 while (my $line = $iterator->next_row) {
 	
@@ -84,7 +90,18 @@ while (my $line = $iterator->next_row) {
 	my ($tier, $indel);
 	
 	### check for FA or FREQ
-	unless (exists $att->{$nName}{FA} or exists $att->{$nName}{FREQ}) {
+	if (exists $att->{$nName}{FREQ}) {
+		# VarScan somatic attribute, convert to MuTect style FA for consistency
+		my $nFA = $att->{$nName}{FREQ};
+		$nFA =~ s/\$$//;
+		$nFA /= 100;
+		$att->{$nName}{FA} = $nFA;
+		my $tFA = $att->{$tName}{FREQ};
+		$tFA =~ s/\$$//;
+		$tFA /= 100;
+		$att->{$tName}{FA} = $tFA;
+	}
+	unless (exists $att->{$nName}{FA}) {
 		# No frequency of alternate
 		
 		# calculate FREQ attribute
@@ -221,7 +238,8 @@ while (my $line = $iterator->next_row) {
 		if ($indel) {
 			$normalAltCount = (split ',', $att->{$nName}{TIR}, 2)[ $tier - 1 ];
 			$tumorAltCount  = (split ',', $att->{$tName}{TIR}, 2)[ $tier - 1 ];
-		} else {
+		} 
+		else {
 			$normalAltCount = (split ',', $att->{$nName}{TAR}, 2)[ $tier - 1 ];
 			$tumorAltCount  = (split ',', $att->{$tName}{TAR}, 2)[ $tier - 1 ];
 		}
@@ -236,26 +254,33 @@ while (my $line = $iterator->next_row) {
 		# convert AD ref,alt from DP4 
 		my @nC = split ',', $att->{$nName}{DP4}, 4;
 		my @tC = split ',', $att->{$tName}{DP4}, 4;
-		my $normalCount = sprintf("%d,%d", $nC[0] + $nC[1], $nC[2] + $nC[3]);
-		my $tumorCount = sprintf("%d,%d", $tC[0] + $tC[1], $tC[2] + $tC[3]);
-		
-		$att->{$nName}{AD} = $normalCount;
-		$att->{$tName}{AD} = $tumorCount;
+		$att->{$nName}{AD} = sprintf("%d,%d", $nC[0] + $nC[1], $nC[2] + $nC[3]);
+		$att->{$tName}{AD} = sprintf("%d,%d", $tC[0] + $tC[1], $tC[2] + $tC[3]);
+	}
+	elsif (exists $att->{$nName}{AD} and 
+		exists $att->{$nName}{RD} and 
+		exists $att->{$nName}{DP4}
+	) {
+		# VarScan is using separate counts for everything
+		$att->{$nName}{AD} = sprintf("%d,%d", $att->{$nName}{RD}, 
+			$att->{$nName}{AD});
+		$att->{$tName}{AD} = sprintf("%d,%d", $att->{$tName}{RD}, 
+			$att->{$tName}{AD});
+		$change_AD_comment++;
 	}
 	
-	
-	
-	# update the line
+	### update the line
 	if ($minimize) {
-		
-		# format column
-		$line->value(8, join(':', qw(GT AD FA)) );
+		# we need to delete extraneous attributes
 		
 		# sample columns
-		$line->value($norm_i, join(':', map {$att->{$nName}{$_}} qw(GT AD FA)) );
-		$line->value($tumr_i, join(':', map {$att->{$tName}{$_}} qw(GT AD FA)) );
+		foreach (keys %{$att->{$nName}}) {
+			next if ($_ eq 'GT' or $_ eq 'AD' or $_ eq 'FA');
+			delete $att->{$nName}{$_};
+			delete $att->{$tName}{$_};
+		}
 		
-		# update INFO column
+		# INFO column
 		foreach my $id (@noINFO) {
 			# these are the extraneous fields found in the somatic callers I've been using
 			# keep anything that's not in this list
@@ -263,59 +288,42 @@ while (my $line = $iterator->next_row) {
 				delete $att->{INFO}{$id};
 			}
 		}
-		
-		# regenerate INFO field with remainder
-		my $info = join(';', 
-			map { join('=', $_, $att->{INFO}{$_}) } 
-			sort {$a cmp $b} 
-			keys %{$att->{INFO}}
-		);
-		$info ||= '.'; # sometimes we have nothing left
-		$line->value(7, $info);
 	}
-	else {
-		# we can skip the INFO column since we don't modify that
-		
-		# determine the format order, alphabetize since we can't maintain original order
-		my @formatKeys = qw(GT); # genotype must come first
-		foreach (sort {$a cmp $b} keys %{ $att->{$nName} }) {
-			push @formatKeys, $_ unless $_ eq 'GT';
-		}
-		$line->value(8, join(":", @formatKeys));
-		$line->value($norm_i, join(":", map { $att->{$nName}{$_} } @formatKeys ) );
-		$line->value($tumr_i, join(":", map { $att->{$tName}{$_} } @formatKeys ) );
-	}
+	$line->rewrite_vcf_attributes or warn "failed to rewrite vcf attributes!\n";
 }
 
+
+
 # update the VCF metadata comment lines as necessary
+my $vcf_head = $Data->vcf_headers;
 if ($minimize) {
-	my @comments = $Data->comments; # returns an array
-	my @to_delete;
-	
-	# format metadata lines
-	foreach (my $i = 0; $i < scalar @comments; $i++) {
-		if ($comments[$i] =~ /^##FORMAT/) {
-			push @to_delete, $i unless $comments[$i] =~ /ID=(?:GT|AD|FA)/;
-		}
+	# delete unnecessary FORMAT keys
+	foreach my $key (keys %{ $vcf_head->{FORMAT} }) {
+		next if ($key eq 'GT' or $key eq 'AD' or $key eq 'FA');
+		delete $vcf_head->{FORMAT}{$key};
 	}
-	
-	# info metadata lines
+
+	# delete unnecessary INFO keys
 	foreach my $id (@noINFO) {
-		# these are the extraneous fields found in the somatic callers I've been using
-		# keep anything that's not in this list
-		foreach (my $i = 0; $i < scalar @comments; $i++) {
-			if ($comments[$i] =~ /^##INFO/) {
-				push @to_delete, $i if $comments[$i] =~ /ID=$id/;
-			}
-		}
-	}
-	
-	# update VCF metadata comment lines
-	foreach (sort {$b <=> $a} @to_delete) {
-		# must reverse sort to avoid messing up other lines
-		$Data->delete_comment($_);
+		delete $vcf_head->{INFO}{$id} if exists $vcf_head->{INFO}{$id};
 	}
 }
+	
+unless (exists $vcf_head->{FORMAT}{GT}) {
+	# add FA metadata line
+	$vcf_head->{FORMAT}{GT} = q(ID=GT,Number=1,Type=String,Description="Genotype");
+}
+unless (exists $vcf_head->{FORMAT}{FA}) {
+	# add FA metadata line
+	$vcf_head->{FORMAT}{FA} = q(<ID=FA,Number=A,Type=Float,Description="Allele fraction of the alternate allele with regard to reference">);
+}
+if ($change_AD_comment or not exists $vcf_head->{FORMAT}{AD}) {
+	# add FA metadata line
+	$vcf_head->{FORMAT}{AD} = q(ID=AD,Number=.,Type=Integer,Description="Allelic depths for the ref and alt alleles in the order listed");
+}
+	
+# rewrite the VCF metadata headers
+$Data->rewrite_vcf_headers;
 
 
 
