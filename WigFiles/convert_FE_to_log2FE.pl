@@ -32,7 +32,7 @@ if ($infile =~ /\.bw$/) {
 	$use_bw = 1;
 	$bdgfile = $infile;
 	$bdgfile =~ s/bw$/bdg/;
-	system('/usr/local/bin/bigWigToBedGraph', $infile, $bdgfile) == 0 or 
+	system('bigWigToBedGraph', $infile, $bdgfile) == 0 or 
 		die "unable to execute bigWigToBedGraph!\n";
 }
 else {
@@ -66,7 +66,7 @@ else {
 	while (my $line = $infh->getline) {
 		chomp $line;
 		my @data = split /\t/, $line;
-		if ($data[3] =~ /^\-?\d+\.?\d*$/) {
+		if ($data[3] =~ /^\-?\d+\.?\d*$/ and $data[3] != 0) {
 			$data[3] = log($data[3]) / LOG2;
 		}
 		$outfh->print( join("\t", @data) . "\n");
