@@ -5,7 +5,7 @@ use Getopt::Long;
 use Bio::ToolBox::Data;
 use Bio::ToolBox::utility qw(parse_list ask_user_for_index format_with_commas);
 
-my $VERSION = 3;
+my $VERSION = 4;
 
 =head1 CHANGES
 version 2
@@ -22,6 +22,9 @@ version 2
 
 version 3
 	* Add support for VEP annotation tables
+
+version 4
+	* Change total count, so that category Other variants are not counted.
 
 =cut
 
@@ -185,22 +188,28 @@ foreach my $file (@ARGV) {
 			# determine variant category
 			if ($variant =~ /nonsynonymous/i) {
 				push @{ $hash->{$gene}{nonsynonymous_SNV} }, "$sampleid:$start";
+				$hash->{$gene}{count}++;
 			} elsif ($variant =~ /missense.?variant/i) {
 				push @{ $hash->{$gene}{nonsynonymous_SNV} }, "$sampleid:$start";
+				$hash->{$gene}{count}++;
 			} elsif ($variant =~ /stop.?loss/) {
 				push @{ $hash->{$gene}{stoploss} }, "$sampleid:$start";
+				$hash->{$gene}{count}++;
 			} elsif ($variant =~ /stop.?gain/) {
 				push @{ $hash->{$gene}{stopgain} }, "$sampleid:$start";
+				$hash->{$gene}{count}++;
 			} elsif ($variant =~ /non.?frame.?shift/) {
 				push @{ $hash->{$gene}{nonframeshift_indel} }, "$sampleid:$start";
+				$hash->{$gene}{count}++;
 			} elsif ($variant =~ /frame.?shift/) {
 				push @{ $hash->{$gene}{frameshift} }, "$sampleid:$start";
+				$hash->{$gene}{count}++;
 			} else {
 				push @{ $hash->{$gene}{other} }, "$sampleid:$start";
+				# do not add to the mutation count
 			}
 		
 			# update counts
-			$hash->{$gene}{count}++;
 			$hash->{$gene}{samples}{$sampleid} += 1;
 			foreach my $tag (@count_tags) {
 				if ($sampleid =~ /$tag/) {
@@ -220,10 +229,10 @@ foreach my $file (@ARGV) {
 
 ### OUTPUT DATA table
 # prepare output file
-my @headers = qw(GeneName Total_Number); 
+my @headers = qw(GeneName Mutation_Count); 
 push @headers, map {$_ . '_count'} @count_tags if @count_tags;
-push @headers, qw(Sample_Number Samples nonsynonymous_SNV_Number Stop_gain_Number 
-		Stop_loss_Number Frameshift_Number Nonframeshift_Number Other_Number 
+push @headers, qw(Sample_Count Samples Nonsynonymous_SNV_Count Stop_Gain_Count 
+		Stop_Loss_Count Frameshift_Count Nonframeshift_Count Other_Count 
 		Nonsynonymous_SNV Stop_gain Stop_loss Frameshift  Nonframeshift Other);
 my $Out = Bio::ToolBox::Data->new('columns' => \@headers);
 
@@ -298,7 +307,8 @@ sub add_gene_to_output {
 	foreach my $id (
 		qw(nonsynonymous_SNV stopgain stoploss frameshift nonframeshift_indel other)
 	) {
-		push @values, join(',', @{ $hash->{$gene}{$id} });
+		my $string = join(',', @{ $hash->{$gene}{$id} }) || undef;
+		push @values, $string;
 	}
 	
 	# finally add these values to the output array
