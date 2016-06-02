@@ -51,6 +51,7 @@ Options:
 	--ortho     Write a second bam file with all orthologous reads
 	--pick      Assign the best alignment to one species based on 
 	            mapping score and the fewest number of CIGAR operations
+
 USAGE
 
 
@@ -61,7 +62,7 @@ my $do_ortho = 0;
 my $do_pick = 0;
 my ($file1, $file2);
 if (scalar @ARGV == 0) {
-	print $description $usage;
+	print $description . $usage;
 	exit 0;
 }
 if (scalar @ARGV == 2) {
