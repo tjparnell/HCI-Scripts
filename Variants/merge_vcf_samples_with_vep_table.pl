@@ -27,7 +27,7 @@ included, on the assumption that not all are required.
 
 The sample information is put in behind the first ID column.
 
-Usage: $0 <input.vcf> <input.annot.txt>
+Usage: $0 --vcf <input.vcf> --in <input.annot.txt>
 Options: 
   --vcf <input.vcf>     Define the original VCF file with the sample 
                         information. Requires one or more sample columns.
