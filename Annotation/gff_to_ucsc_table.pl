@@ -5,11 +5,11 @@
 use strict;
 use Getopt::Long;
 use Pod::Usage;
-use Bio::ToolBox::parser::gff;
-use Bio::ToolBox::GeneTools qw(ucsc_string);
+use Bio::ToolBox::parser::gff '1.41';
+use Bio::ToolBox::GeneTools 1.41 qw(ucsc_string);
 use Bio::ToolBox::utility qw(open_to_write_fh format_with_commas);
 
-my $VERSION = '1.40';
+my $VERSION = '1.41';
 
 print "\n This program will convert a GFF3 file to UCSC gene table\n";
 
@@ -138,7 +138,7 @@ sub process_gff_file_to_table {
 	
 	# Process the top features
 	my @top_features = $parser->top_features();
-	printf "parsed %d top features\n", scalar @top_features;
+	printf " parsed %d top features\n", scalar @top_features;
 	while (@top_features) {
 		my $feature = shift @top_features;
 		my $type = $feature->primary_tag;
@@ -161,19 +161,23 @@ sub process_gff_file_to_table {
 			next;
 		}
 	}
+	my $orphans = $parser->orphans;
+	if (@$orphans) {
+		printf " Input file has issues: %d orphans found!\n", scalar @$orphans;
+	}
 }
 
 __END__
 
 =head1 NAME
 
-gff3_to_ucsc_table.pl
+gff_to_ucsc_table.pl
 
 A script to convert a GFF3 file to a UCSC style refFlat table
 
 =head1 SYNOPSIS
 
-gff3_to_ucsc_table.pl [--options...] <filename>
+gff_to_ucsc_table.pl [--options...] <filename>
   
   Options:
   --in <filename>   [gff3 gtf]
@@ -219,30 +223,24 @@ Display this POD documentation.
 
 =head1 DESCRIPTION
 
-This program will convert a GFF3 annotation file to a UCSC-style 
+This program will convert GFF3 or GTF annotation file to a UCSC-style 
 gene table, using the refFlat format. This includes transcription 
 and translation start and stops, as well as exon start and stops, 
 but does not include coding exon frames. See the documentation at 
 L<http://genome.ucsc.edu/goldenPath/gbdDescriptionsOld.html#RefFlat> 
 for more information.
 
-The program assumes the input GFF3 file includes standard 
+The program assumes the input GFF file includes standard 
 parent-E<gt>child relationships using primary IDs and primary tags, 
 including gene, mRNA, exon, CDS, and UTRs. Non-standard genes, 
 including non-coding RNAs, will also be processed too. Chromosomes, 
 contigs, and embedded sequence are ignored. Non-pertinent features are 
-safely ignored but reported. Most pragmas are ignored, except for close 
-feature pragmas (###), which will aid in processing very large files. 
+safely ignored but reported. Most pragmas are ignored. 
 Multiple parentage and shared features, for example exons common to 
 multiple alternative transcripts, are properly handled. See the 
 documentation for the GFF3 file format at 
 L<http://www.sequenceontology.org/resources/gff3.html> for more 
 information. 
-
-Previous versions of this script attempted to export in the UCSC 
-genePredExt table format, often with inaccurate results. Users 
-who need this format should investigate the C<gff3ToGenePred> 
-program available at L<http://hgdownload.cse.ucsc.edu/admin/exe/>.
 
 =head1 AUTHOR
 
