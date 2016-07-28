@@ -14,14 +14,14 @@
 use strict;
 use Getopt::Long;
 use Bio::ToolBox::Data '1.40';
-my $VERSION = 1.3001;
+my $VERSION = 1.4;
 
 unless (@ARGV) {
 	print <<END;
 
 A script to fix and standardize sample attributes in somatic VCF files. 
 Should properly handle somatic VCF files from MuTect, SomaticSniper, 
-Strelka, and VarScan.
+Strelka, VarScan, and scalpel.
 
 It performs the following functions:
   - adds missing alternate fraction (FA or FREQ) attribute (Strelka and 
@@ -38,8 +38,8 @@ Options:
   -o <output.vcf>       default is to overwrite input!!!!
   -t <NAME>             Tumor sample name, default TUMOR
   -n <NAME>             Normal sample name, default NORMAL
-  -m                    flag to minimize to just three sample attributes: 
-                        GT:AD:FA
+  -m                    flag to minimize to just three sample attributes 
+                        (GT:AD:FA) and remove all INFO fields
 END
 	exit;
 }
@@ -61,8 +61,6 @@ GetOptions(
 # unnecessary INFO fields to remove when minimizing
 # this list may need to be updated with keys from other callers
 # not updating will leave behind those INFO fields, not a huge problem
-my @noINFO = qw(IC IHP NT OVERLAP QSI QSI_NT RC RU SGT SVTYPE TQSI TQSI_NT 
-	MQ0 SOMATIC VT DB DP GPV SPV SS SSC AC AF AN .);
 
 
 # input file
@@ -283,12 +281,10 @@ while (my $line = $iterator->next_row) {
 		}
 		
 		# INFO column
-		foreach my $id (@noINFO) {
-			# these are the extraneous fields found in the somatic callers I've been using
-			# keep anything that's not in this list
-			if (exists $att->{INFO}{$id}) {
-				delete $att->{INFO}{$id};
-			}
+		foreach (keys %{$att->{INFO}} ) {
+			# basically remove everything in the INFO field
+			# the idea is to minimize, right????
+			delete $att->{INFO}{$_};
 		}
 	}
 	$line->rewrite_vcf_attributes or warn "failed to rewrite vcf attributes!\n";
@@ -306,8 +302,8 @@ if ($minimize) {
 	}
 
 	# delete unnecessary INFO keys
-	foreach my $id (@noINFO) {
-		delete $vcf_head->{INFO}{$id} if exists $vcf_head->{INFO}{$id};
+	foreach (keys %{$vcf_head->{INFO}}) {
+		delete $vcf_head->{INFO}{$_};
 	}
 }
 	
@@ -383,6 +379,13 @@ __END__
 	##FORMAT=<ID=AD,Number=1,Type=Integer,Description="Depth of variant-supporting bases (reads2)">
 	##FORMAT=<ID=FREQ,Number=1,Type=String,Description="Variant allele frequency">
 	##FORMAT=<ID=DP4,Number=1,Type=String,Description="Strand read counts: ref/fwd, ref/rev, var/fwd, var/rev">
+
+
+-head2 Scalpel FORMAT keys
+	
+	##FORMAT=<ID=AD,Number=.,Type=Integer,Description="k-mer depth supporting reference/indel at the site">
+	##FORMAT=<ID=DP,Number=1,Type=Integer,Description="k-mer Depth">
+	##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
 
 
 =head2 ideal minimal
