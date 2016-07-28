@@ -14,7 +14,7 @@
 use strict;
 use Getopt::Long;
 use Bio::ToolBox::Data '1.40';
-my $VERSION = 1.3;
+my $VERSION = 1.3001;
 
 unless (@ARGV) {
 	print <<END;
@@ -167,9 +167,11 @@ while (my $line = $iterator->next_row) {
 		elsif (exists $att->{$nName}{AD}) {
 			# AD = ref bases, alt bases
 			my ($ref, $alt) = split ',', $att->{$nName}{AD}, 2;
-			$normal_FA = sprintf "%0.2f", $alt / ($ref + $alt);
+			my $total = $ref + $alt;
+			$normal_FA = $total == 0 ? '0.00' : sprintf "%0.2f", $alt / $total;
 			($ref, $alt) = split ',', $att->{$tName}{AD}, 2;
-			$tumor_FA = sprintf "%0.2f", $alt / ($ref + $alt);
+			$total = $ref + $alt;
+			$tumor_FA = $total == 0 ? '0.00' : sprintf "%0.2f", $alt / $total;
 		} 
 		
 		else {
