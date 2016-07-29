@@ -2,7 +2,7 @@
 
 use strict;
 use Getopt::Long;
-use Bio::ToolBox::Data 1.34;
+use Bio::ToolBox::Data 1.40;
 
 unless (@ARGV) {
 	print <<END;
@@ -65,17 +65,29 @@ my $Fail;
 if ($failfile) {
 	$failfile =~ s/\.gz$//; # don't mess with bgzip files
 	$Fail = $Data->duplicate;
-	$Fail->add_comment("##FILTER=<ID=FADelta,Description=\"Difference between Tumor and Normal alternate read frequency (FA) below $delta\">") if $delta;
-	$Fail->add_comment("##FILTER=<ID=NormFAMin,Description=\"Normal alternate read frequency (FA) below $normMin\">") if $normMin;
-	$Fail->add_comment("##FILTER=<ID=NormFAMax,Description=\"Normal alternate read frequency (FA) exceeds $normMax\">") if $normMax != 1.0;
-	$Fail->add_comment("##FILTER=<ID=TumorFAMin,Description=\"Tumor alternate read frequency (FA) below $tumorMin\">") if $tumorMin;
-	$Fail->add_comment("##FILTER=<ID=TumorFAMax,Description=\"Tumor alternate read frequency (FA) exceeds $tumorMax\">") if $tumorMax != 1.0;
+	my $head = $Fail->vcf_headers;
+	$head->{FILTER}{FADelta} = 
+		qq(ID=FADelta,Description="Difference between Tumor and Normal alternate read frequency (FA) below $delta")
+		if $delta;
+	$head->{FILTER}{NormFAMin} =
+		qq(ID=NormFAMin,Description="Normal alternate read frequency (FA) below $normMin")
+		if $normMin;
+	$head->{FILTER}{NormFAMax} = 
+		qq(ID=NormFAMax,Description="Normal alternate read frequency (FA) exceeds $normMax")
+		if $normMax;
+	$head->{FILTER}{TumorFAMin} = 
+		qq(ID=TumorFAMin,Description="Tumor alternate read frequency (FA) below $tumorMin")
+		if $tumorMin;
+	$head->{FILTER}{TumorFAMax} = 
+		qq(ID=TumorFAMax,Description="Tumor alternate read frequency (FA) exceeds $tumorMax")
+		if $tumorMax;
+	$Fail->rewrite_vcf_headers;
 }
 
 # Filter
 my @tosses;
 $Data->iterate( \&filter_on_FA );
-printf " filtering %s variants, keeping %s variants\n", 
+printf " filtered %s variants, kept %s variants\n", 
 	scalar(@tosses), ($Data->last_row - scalar(@tosses));
 $Data->delete_row(@tosses);
 
@@ -86,6 +98,14 @@ if ($Fail) {
 	my $f = $Fail->save($failfile);
 	print " wrote failed file $f\n";
 }
+
+
+
+
+
+
+
+
 
 # filter subroutine
 sub filter_on_FA {
