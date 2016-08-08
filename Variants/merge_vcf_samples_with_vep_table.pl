@@ -15,7 +15,7 @@ use strict;
 use Getopt::Long;
 use Bio::ToolBox::Data '1.40';
 
-my $VERSION = 1.0;
+my $VERSION = 1.1;
 
 unless (@ARGV) {
 	print <<END;
@@ -132,26 +132,33 @@ print " wrote file $save\n";
 sub store_sample_data {
 	my $row = shift;
 	
-	my ($allele, $start);
+	# check the reference and alternate alleles
 	my $ref = $row->value(3);
 	my $alt = $row->value(4);
-	if (length($ref) < length($alt) ) {
-	 	# insertion
-	 	if ($alt =~ /,/) {
-	 		# we have two alternate alleles at the same point
-	 		# we have to process these separately one at a time
-			my @alleles = split ',', $alt;
-			foreach my $a (@alleles) {
-				# call ourself for each allele
-				$row->value(4, $a); # set the allele to each alternate
-				store_sample_data($row);
-			}
-			return;
-	 	}
-	 	else {
-			$allele = substr($alt, 1);
-			$start = $row->start;
+	if ($alt =~ /,/) {
+		# we have two alternate alleles at the same point
+		# we have to process these separately one at a time
+		my @alleles = split ',', $alt;
+		foreach my $a (@alleles) {
+			# call ourself for each allele
+			$row->value(4, $a); # set the allele to each alternate
+			store_sample_data($row);
 		}
+		return;
+	}
+	
+	# set the allele and start appropriately based on variant type
+	my ($allele, $start);
+	if (length($ref) > 1 and length($alt) > 1) {
+		# sequence alteration, probably multinucleotide that don't fit in the 
+		# other categories
+		$allele = substr($alt, 1);
+		$start = $row->start + 1;
+	}
+	elsif (length($ref) < length($alt) ) {
+	 	# insertion
+		$allele = substr($alt, 1);
+		$start = $row->start;
 	}
 	elsif (length($ref) > length($alt) ) {
 	 	# deletion
@@ -159,7 +166,7 @@ sub store_sample_data {
 		$start = $row->start + 1;
 	}
 	else {
-		# snp
+		# snv
 		$allele = $alt;
 		$start = $row->start;
 	}
