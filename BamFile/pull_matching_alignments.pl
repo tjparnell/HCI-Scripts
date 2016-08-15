@@ -64,7 +64,6 @@ while (my $a = $in->read1) {
 	if (exists $lookup{ $a->qname }) {
 		$matched++;
 		$out->write1($a);
-		delete $lookup{ $a->qname };
 	}
 }
 
