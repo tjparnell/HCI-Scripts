@@ -43,7 +43,7 @@ while (my $line = $fh->getline) {
 		$duplicates++;
 	}
 	else {
-		$lookup{$line} = 1;
+		$lookup{$line} = 0;
 	}
 }
 $fh->close;
@@ -63,14 +63,17 @@ my $matched = 0;
 while (my $a = $in->read1) {
 	if (exists $lookup{ $a->qname }) {
 		$matched++;
+		$lookup{ $a->qname }++;
 		$out->write1($a);
 	}
 }
 
 # check for leftovers
-if (%lookup) {
-	printf "Warning: %s names could not be found!\n", scalar keys %lookup;
+my $notfound = 0;
+foreach (keys %lookup) {
+	$notfound++ if $lookup{$_} == 0;
 }
+print "Warning: $notfound names could not be found!\n" if $notfound;
 
 print "Matched $matched alignments\n";
 print "Wrote output file $outfile\n";
