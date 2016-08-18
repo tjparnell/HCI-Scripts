@@ -15,7 +15,7 @@ use strict;
 use Getopt::Long;
 use Bio::ToolBox::Data '1.40';
 
-my $VERSION = 1.1;
+my $VERSION = 1.2;
 
 unless (@ARGV) {
 	print <<END;
@@ -115,14 +115,14 @@ if ($noFind) {
 $Data->reorder_column(0, @new_i, 1 .. $last);
 
 # save the file
-my $save;
+my $saved;
 if ($outfile) {
-	$save = $Data->save($outfile);
+	$saved = $Data->save($outfile);
 }
 else {
-	$save = $Data->save;
+	$saved = $Data->save;
 }
-print " wrote file $save\n";
+print " wrote file $saved\n";
 
 
 
@@ -148,8 +148,35 @@ sub store_sample_data {
 	}
 	
 	# set the allele and start appropriately based on variant type
-	my ($allele, $start);
-	if (length($ref) > 1 and length($alt) > 1) {
+	my $attrib = $row->attributes;
+	my ($allele, $allele2, $start);
+		# VEP bugs where 2 different alleles could be recorded, so deal with it
+	if (exists $attrib->{INFO}{SVTYPE} and 
+		$attrib->{INFO}{SVTYPE} !~ /snp/i
+	) {
+		# I think VEP defaults to using the SVTYPE INFO field?
+		if ($attrib->{INFO}{SVTYPE} eq 'DEL') {
+			$allele = 'deletion';
+			$allele2 = '-';
+			$start = $row->start + 1;
+		}
+		elsif ($attrib->{INFO}{SVTYPE} eq 'INS') {
+			$allele = 'insertion';
+			$allele2 = '-';
+			$start = $row->start;
+		}
+		elsif ($attrib->{INFO}{SVTYPE} =~ /^DUP/) {
+			$allele = 'duplication';
+			$allele2 = '-';
+			$start = $row->start + 1;
+		}
+		else {
+			$allele = $attrib->{INFO}{SVTYPE};
+			$allele2 = '-';
+			$start = $row->start + 1;
+		}
+	}
+	elsif (length($ref) > 1 and length($alt) > 1) {
 		# sequence alteration, probably multinucleotide that don't fit in the 
 		# other categories
 		$allele = substr($alt, 1);
@@ -171,12 +198,12 @@ sub store_sample_data {
 		$start = $row->start;
 	}
 	
+	
 	# chromosome
 	my $chr = $row->seq_id;
 	$chr =~ s/^chr//; # Ensembl doesn't like chr prefix
 	
 	# collect the sample attribute tags
-	my $attrib = $row->attributes; 
 	my @values;
 	foreach my $i (@samples) {
 		push @values, join(':', map { $attrib->{$i}{$_} || '.' } @tags);
@@ -185,6 +212,10 @@ sub store_sample_data {
 	# generate id and store data under it
 	my $id = sprintf "%s_%d_%s", $chr, $start, $allele;
 	$sampleInfo{$id} = \@values; 
+	if ($allele2) {
+		$id = sprintf "%s_%d_%s", $chr, $start, $allele2;
+		$sampleInfo{$id} = \@values; 
+	}
 }
 
 
