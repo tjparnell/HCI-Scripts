@@ -5,7 +5,7 @@ use Getopt::Long;
 use Bio::ToolBox::Data;
 use Bio::ToolBox::utility qw(parse_list ask_user_for_index format_with_commas);
 
-my $VERSION = 4;
+my $VERSION = 5;
 
 =head1 CHANGES
 version 2
@@ -25,6 +25,11 @@ version 3
 
 version 4
 	* Change total count, so that category Other variants are not counted.
+
+version 5
+	* Add support for transcript amplification and transcript ablation due 
+	  to copy number changes. Supported by VEP annotation of large structural 
+	  variants, such as reported by CNV callers.
 
 =cut
 
@@ -165,6 +170,8 @@ foreach my $file (@ARGV) {
 				'stopgain' => [],
 				'frameshift' => [],
 				'nonframeshift_indel' => [],
+				'amplification' => [],
+				'ablation' => [],
 				'other' => [],
 				'samples' => {},
 			};
@@ -204,6 +211,12 @@ foreach my $file (@ARGV) {
 			} elsif ($variant =~ /frame.?shift/) {
 				push @{ $hash->{$gene}{frameshift} }, "$sampleid:$start";
 				$hash->{$gene}{count}++;
+			} elsif ($variant eq 'transcript_amplification') {
+				push @{ $hash->{$gene}{amplification} }, "$sampleid:$start";
+				$hash->{$gene}{count}++;
+			} elsif ($variant eq 'transcript_ablation') {
+				push @{ $hash->{$gene}{ablation} }, "$sampleid:$start";
+				$hash->{$gene}{count}++;
 			} else {
 				push @{ $hash->{$gene}{other} }, "$sampleid:$start";
 				# do not add to the mutation count
@@ -232,8 +245,9 @@ foreach my $file (@ARGV) {
 my @headers = qw(GeneName Mutation_Count); 
 push @headers, map {$_ . '_count'} @count_tags if @count_tags;
 push @headers, qw(Sample_Count Samples Nonsynonymous_SNV_Count Stop_Gain_Count 
-		Stop_Loss_Count Frameshift_Count Nonframeshift_Count Other_Count 
-		Nonsynonymous_SNV Stop_gain Stop_loss Frameshift  Nonframeshift Other);
+		Stop_Loss_Count Frameshift_Count Nonframeshift_Count Amplification_Count 
+		Ablation_Count Other_Count Nonsynonymous_SNV Stop_gain Stop_loss 
+		Frameshift  Nonframeshift Amplification Ablation Other);
 my $Out = Bio::ToolBox::Data->new('columns' => \@headers);
 
 # start putting the collected gene data into the output data array
@@ -301,13 +315,15 @@ sub add_gene_to_output {
 	push @values, scalar @{ $hash->{$gene}{stoploss} };
 	push @values, scalar @{ $hash->{$gene}{frameshift} };
 	push @values, scalar @{ $hash->{$gene}{nonframeshift_indel} };
+	push @values, scalar @{ $hash->{$gene}{amplification} };
+	push @values, scalar @{ $hash->{$gene}{ablation} };
 	push @values, scalar @{ $hash->{$gene}{other} };
 	
 	# now add sampleIDs for each group
 	foreach my $id (
-		qw(nonsynonymous_SNV stopgain stoploss frameshift nonframeshift_indel other)
+		qw(nonsynonymous_SNV stopgain stoploss frameshift nonframeshift_indel amplification ablation other)
 	) {
-		my $string = join(',', @{ $hash->{$gene}{$id} }) || undef;
+		my $string = join(',', @{ $hash->{$gene}{$id} }) || '.';
 		push @values, $string;
 	}
 	
