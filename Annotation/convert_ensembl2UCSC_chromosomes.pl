@@ -14,7 +14,7 @@
 use strict;
 use Getopt::Long;
 use Bio::ToolBox::Data '1.41';
-my $VERSION = 1.0;
+my $VERSION = 1.1;
 
 unless (scalar @ARGV >= 2) {
 	print <<END;
@@ -31,7 +31,7 @@ Example:
   wget http://hgdownload.soe.ucsc.edu/goldenPath/rn6/database/chromInfo.txt.gz
 You could also use a samtools fasta index .fai file. 
 
-Supports any recognizable annotation table (gtf gff3 bed refFlat genePred etc).
+Supports any recognizable annotation table (gtf gff3 bed refFlat genePred vcf).
 
 Output file is optional; it will append _ucsc to the input basename.
 
@@ -56,7 +56,8 @@ process();
 
 sub make_lookup_table {
 	my $Data = Bio::ToolBox::Data->new() or die "no Data object!";
-	my $fh = $Data->open_to_read_fh($chromfile);
+	my $fh = $Data->open_to_read_fh($chromfile) or 
+		die "unable to open $chromfile! $!\n";
 	my %lookup;
 	while (my $line = $fh->getline) {
 		chomp $line;
@@ -65,10 +66,10 @@ sub make_lookup_table {
 		if ($chr =~ /^chr(\d+)$/) {
 			$alt = lc $1;
 		}
-		elsif ($chr =~ /^chr\w+_(\w+)v\d_?(random|alt)?$/) {
+		elsif ($chr =~ /^chr[A-Za-z\d]+_([A-Za-z\d]+)v\d_?(?:random|alt)?$/) {
 			$alt = lc $1;
 		}
-		elsif ($chr =~ /^chr\w+_(\w+)_?(random|alt)?$/) {
+		elsif ($chr =~ /^chr[A-Za-z\d]+_([A-Za-z\d]+)_?(?:random|alt)?$/) {
 			$alt = lc $1;
 		}
 		elsif ($chr eq 'chrM') {
@@ -91,13 +92,15 @@ sub process {
 	my $Stream = Bio::ToolBox::Data->new(
 		stream => 1,
 		in     => $infile,
-	);
+	) or die " unable to open input table $infile! $!\n";
+	# we check the chromosome column below
 	
 	# make output
 	unless ($outfile) {
 		$outfile = $Stream->path . $Stream->basename . '_ucsc' . $Stream->extension;
 	}
-	my $Out = $Stream->duplicate($outfile);
+	my $Out = $Stream->duplicate($outfile) or 
+		die " unable to open output stream for file $outfile! $!\n";
 	
 	# deal with metadata
 	my @comments = $Stream->comments;
@@ -148,7 +151,7 @@ sub process {
 	}
 	$Out->close_fh;
 	$Stream->close_fh;
-	print "wrote $outfile\n";
+	printf "wrote %s\n", $Out->filename;
 	if (%notfound) {
 		printf "could not convert the following chromosomes:\n%s\n", 
 			join("\n", keys %notfound);
