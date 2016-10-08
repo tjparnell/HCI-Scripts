@@ -592,7 +592,7 @@ sub collect_correlations {
 			# change strand
 			if ($set_strand) {
 				# user is imposing a strand
-				if ($$row->strand < 0) {
+				if ($row->strand < 0) {
 					# only change shift direction if reverse strand
 					$best_shift *= -1;
 				}
