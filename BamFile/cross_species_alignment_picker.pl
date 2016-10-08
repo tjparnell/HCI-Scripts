@@ -15,6 +15,9 @@ use strict;
 use Getopt::Long;
 use Bio::DB::Sam;
 
+my $VERSION = 1.1;
+# version 1.0 used mapping quality score and number of cigar operations
+# version 1.1 uses alignment score and sum of mismatches and cigar operations
 
 my $description = <<DESCRIPTION;
 
@@ -26,14 +29,16 @@ alignments matching to both species are either discarded, written to a cross
 species file, or assigned to one of the two species.
 
 Provide two bam files representing alignments to each species index. The 
-bam files should have unique alignments only; multiple alignments will 
-probably be ignored. Bam files do not need to be sorted, but any sort order 
-will be maintained. Unmapped reads are ignored and discarded.
+bam files should have unique alignments only; only the first occurence of 
+multiple alignments will be retained. Bam files do not need to be sorted, 
+but any sort order will be maintained. Unmapped reads are ignored and 
+discarded.
 
-An option is available to pick the best alignment based on the mapping 
-quality score and the number of CIGAR operations (on the assumption that 
-a simpler alignment strategy with fewest number of mismatches and indels
-is better). 
+An option is available to pick the best alignment based on one of two 
+criteria: the alignment score (AS tag, lower is better), or the sum of 
+the number of mismatches (NM tag) and the number of CIGAR operations 
+(including insertions, deletions, soft and hard trims). Alignments 
+equal in all scores are considered orthologous.
 
 Othologous reads mapping to both indices can either be discarded (default) 
 or written to a second bam file. When the best pick option is enabled, 
@@ -110,8 +115,9 @@ write_bam_files($file2, 2);
 
 
 sub read_first_bam {
-	# this reads the first bam file, and stores the quality and cigar number
-	# for each aligned read
+	# this reads the first bam file, and stores the alignment score (AS tag) and
+	# the sum of CIGAR of operations and number of mismatches
+	# (mismatches aren't always stored in the CIGAR) for each aligned read
 	
 	my $in = Bio::DB::Bam->open($file1) or die " Cannot open input Bam file!\n";
 	print " Reading $file1...\n";
@@ -123,9 +129,11 @@ sub read_first_bam {
 	# walk through reads
 	while (my $a = $in->read1) {
 		next if $a->unmapped;
-		$alignments{$a->qname} = sprintf "%d\t%d", $a->qual, $a->n_cigar;
-# 		printf("   %s has quality %d and %d CIGAR operations\n", $a->qname, $a->qual, $a->n_cigar) if $count < 10;
+		$alignments{$a->qname} = sprintf "%d,%d", $a->aux_get('AS'), 
+			$a->aux_get('NM') + $a->n_cigar;
+# 		printf("   %s has quality %d CIGAR %s, %d operations, alignment score %d, and %d mismatches\n", $a->qname, $a->qual, $a->cigar_str, $a->n_cigar, $a->aux_get('AS'), $a->aux_get('NM'));
 		$count++;
+# 		exit if $count > 100;
 	}
 	print "  read $count mapped alignments.\n";
 }
@@ -137,6 +145,7 @@ sub read_second_bam {
 	# 1 is keep first file read
 	# 2 is keep second file read
 	# 3 is orthologous read in both, keep or discard as requested
+	# 0 is discard (multiple hit alignment)
 	
 	my $in = Bio::DB::Bam->open($file2) or die " Cannot open input Bam file!\n";
 	print " Reading $file2...\n";
@@ -157,39 +166,45 @@ sub read_second_bam {
 				# we already processed this so move one
 		
 			# compare
-			my ($qual, $nop) = split '\t', $alignments{$name};
+			my ($score1, $error1) = split ',', $alignments{$name};
 			if ($do_pick) {
-				if ($a->qual > $qual) {
+				my $score = $a->aux_get('AS');
+				if ($score < $score1) {
 					# second alignment is better
 					$alignments{$name} = 2;
 					$count2best++;
 				}
-				elsif ($a->qual < $qual) {
+				elsif ($score > $score1) {
 					# first alignment is better
 					$alignments{$name} = 1;
 					$count1best++;
 				}
-				elsif ( ($a->qual == $qual) and ($a->n_cigar < $nop) ) {
-					# second alignment is better
-					$alignments{$name} = 2;
-					$count2best++;
-				}
-				elsif ( ($a->qual == $qual) and ($a->n_cigar > $nop) ) {
-					# first alignment is better
-					$alignments{$name} = 1;
-					$count1best++;
-				}
-				else {
-					# alignments are equal
-					if ($do_ortho) {
-						# keep for third orthologous bam file
-						$alignments{$name} = 3;
+				elsif ($score == $score1) {
+					# equal alignment scores, check number of errors 
+					my $error = $a->aux_get('NM') + $a->n_cigar;
+					
+					if ($error < $error1) {
+						# second alignment is better
+						$alignments{$name} = 2;
+						$count2best++;
+					}
+					elsif ($error > $error1) {
+						# first alignment is better
+						$alignments{$name} = 1;
+						$count1best++;
 					}
 					else {
-						# drop the alignment
-						delete $alignments{$name};
+						# alignments are equal
+						if ($do_ortho) {
+							# keep for third orthologous bam file
+							$alignments{$name} = 3;
+						}
+						else {
+							# drop the alignment
+							$alignments{$name} = 0;
+						}
+						$countequal++;
 					}
-					$countequal++;
 				}
 				next;
 			}
@@ -199,7 +214,7 @@ sub read_second_bam {
 				$countortho++;
 			}
 			else {
-				delete $alignments{$name} if exists $alignments{$name};
+				$alignments{$name} = 0 if exists $alignments{$name};
 			}
 		}
 		else {
