@@ -38,7 +38,12 @@ foreach (@ARGV) {
 		my $attributes = $row->vcf_attributes;
 		my @fa;
 		for my $i (9 .. $number) {
-			push @fa, $attributes->{$i}{FA} || 0;
+			my $f = $attributes->{$i}{FA} || $attributes->{$i}{FREQ} || 0;
+			if ($f =~ /\%$/) {
+				$f =~ s/\%$//;
+				$f /= 100;
+			}
+			push @fa, $f;
 		}
 		$Output->add_row( [$row->seq_id, $row->start, $row->value(4), @fa] );
 	} );
