@@ -15,9 +15,10 @@ use strict;
 use Getopt::Long;
 use Bio::DB::Sam;
 
-my $VERSION = 1.1;
+my $VERSION = 1.2;
 # version 1.0 used mapping quality score and number of cigar operations
 # version 1.1 uses alignment score and sum of mismatches and cigar operations
+# version 1.2 improves text output to make counts less confusing
 
 my $description = <<DESCRIPTION;
 
@@ -53,9 +54,10 @@ my $usage = <<USAGE;
 Usage: $0 [options] file1.bam file2.bam 
 
 Options:
-	--ortho     Write a second bam file with all orthologous reads
+	--ortho     Write a second bam file with all orthologous or 
+	            equally mapping alignments
 	--pick      Assign the best alignment to one species based on 
-	            mapping score and the fewest number of CIGAR operations
+	            alignment metrics
 
 USAGE
 
@@ -94,16 +96,19 @@ my $countortho = 0;
 
 
 ### Reads
-read_first_bam();
-read_second_bam();
+my $file1count = read_first_bam();
+my $file2count = read_second_bam();
 
 # report numbers
-if ($do_pick) {
-	printf " There were %d alignments best aligned in file 1\n", $count1best;
-	printf " There were %d alignments best aligned in file 2\n", $count2best;
-	printf " There were %d equally aligned alignments\n", $countequal;
-}
-if ($do_ortho) {
+printf " There were %d mapped alignments in $file1\n", $file1count;
+printf "   %d alignments mapped better than the second file\n", $count1best 
+	if $do_pick;
+printf " There were %d mapped alignments in $file2\n", $file2count;
+printf "   %d alignments mapped better than the first file\n", $count2best 
+	;
+printf " There were %d equally mapped alignments\n", $countequal if $do_pick;
+
+if ($do_ortho and not $do_pick) {
 	printf " There were %d orthologous alignments\n", $countortho;
 }
 
@@ -135,7 +140,7 @@ sub read_first_bam {
 		$count++;
 # 		exit if $count > 100;
 	}
-	print "  read $count mapped alignments.\n";
+	return $count;
 }
 
 sub read_second_bam {
@@ -222,7 +227,7 @@ sub read_second_bam {
 			$alignments{$name} = 2;
 		}
 	}
-	print "  read $count mapped alignments.\n";
+	return $count;
 }
 
 
@@ -282,8 +287,10 @@ sub write_bam_files {
 	}
 	
 	printf "  %d alignments were written to %s\n", $count, $out_name;
-	printf("  %d orthologous alignments were written to %s\n", $cross_count, 
-		$out2_name) if $do_ortho; 
+	if ($do_ortho) {
+		printf "  %d %s alignments were written to %s\n", $cross_count, 
+			$do_pick ? 'equally mapped' : 'orthologous', $out2_name; 
+	}
 }
 
 
