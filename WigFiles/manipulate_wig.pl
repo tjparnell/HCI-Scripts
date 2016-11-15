@@ -12,16 +12,18 @@ A script to manipulate the score value of wig files. This will process all
 forms of text based wig files, including fixedStep, variableStep, and bedGraph. 
 Files can be gzipped. 
 
-NOTE: More than option may be specified! The options below are the order in 
-which the score is manipulated. If they are not in the order you want, you 
+NOTE: More than one option may be specified! The options below are the order 
+in which the score is manipulated. If they are not in the order you want, you 
 may have to pipe to sequential instances. Use 'stdin' and 'stdout' for filenames.
-Use an equal sign do define options with negative values, e.g. --mult=-1
+Use an equal sign to define options with negative values, e.g. --mult=-1
 
 Usage: $0 [options] -i <file1.wig> -o <file1.out.wig>
 Options: 
   --in <file>      Input file. Accepts gz compression. Accepts 'stdin'.
   --out <file>     Output file. Accepts gz compression. Accepts 'stdout'.
                    Optional if all you want is to calculate statistics.
+  --skip <regex>   Discard lines where chromosomes match the regular 
+                   expression. Example: 'chrM|chrUn|random'
   --null           Convert null, NA, N/A, NaN, inf values to 0
   --delog <int>    Delog values of base [int], usually 2 or 10
   --abs            Convert to the absolute value 
@@ -41,6 +43,7 @@ END
 # Options
 my $infile;
 my $outfile;
+my $skip;
 my $doNull = 0;
 my $deLogValue;
 my $doAbsolute = 0;
@@ -55,6 +58,7 @@ my $doStats;
 GetOptions( 
 	'input=s'       => \$infile,
 	'output=s'      => \$outfile,
+	'skip=s'        => \$skip,
 	'null!'         => \$doNull,
 	'delog=i'       => \$deLogValue,
 	'abs!'          => \$doAbsolute,
@@ -81,6 +85,8 @@ if (defined $places) {
 	$places = '%.' . $places . 'f';
 }
 
+# chromosome skipping regex
+my $skipregex = qr($skip);
 
 # open file handles
 my ($infh, $outfh);
@@ -122,15 +128,32 @@ my $stats = {
 # walk through the file
 my $count = 0;
 my $span = 1;
+my $chrom_skip = 0;
+my $wig_process_sub;
 while (my $line = $infh->getline) {
-	# a track line
-	if ($line =~ /^(?:track|browser)/i) {
+	# look at the first characters to determine the type of line we have
+	my $prefix = lc substr($line,0,5);
+	if ($prefix eq 'track') {
+		# track line
 		$outfh->print($line) if $outfh;
 		next;
 	}
-	
-	# a step definition line
-	elsif ($line =~ /^(?:variable|fixed)/i) { 
+	elsif ($prefix eq 'brows') {
+		# browser line
+		$outfh->print($line) if $outfh;
+		next;
+	}
+	elsif ($prefix eq 'varia' or $prefix eq 'fixed') {
+		# a step definition line
+		if ($line =~ /chrom=([\w\-\.]+)/) {
+			my $chrom = $1;
+			if ($chrom =~ $skipregex) {
+				$chrom_skip = 1;
+			}
+			else {
+				$chrom_skip = 0;
+			}
+		}
 		if ($line =~ /span=(\d+)/i) {
 			# capture span size if present
 			$span = $1;
@@ -138,41 +161,32 @@ while (my $line = $infh->getline) {
 		$outfh->print($line) if $outfh;
 		next;
 	} 
-	
-	# comment line
-	elsif ($line =~ /^#/) {
+	elsif (substr($prefix,0,1) eq '#') {
+		# comment line
 		$outfh->print($line) if $outfh;
 		next;
 	}
 	
-	# split line
-	$line =~ s/[\r\n]+$//; # strip all line endings
-	my @data = split /\s+/, $line; # unfortunately could be either space or tab delimited
+	# skipping current chromosome
+	next if $chrom_skip;
 	
-	# a bedGraph data line
-	if (scalar @data == 4) {
-		$data[3] = process_score($data[3]);
-		$outfh->printf("%s\t%d\t%d\t%s\n", $data[0], $data[1], $data[2], $data[3]) 
-			if (defined $data[3] and $outfh);
-		$count++;
-		process_bdg_stats(@data) if $doStats;
-	} 
-	
-	# a variableStep data line
-	elsif (scalar @data == 2) { 
-		$data[1] = process_score($data[1]);
-		$outfh->printf("%d %s\n", $data[0], $data[1]) if (defined $data[1] and $outfh);
-		$count++;
-		process_step_stats($data[1]) if $doStats;
-	} 
-	
-	# a fixedStep data line
-	elsif (scalar @data == 1) { 
-		$data[0] = process_score($data[0]);
-		$outfh->printf("%s\n",$data[0]) if (defined $data[0] and $outfh);
-		$count++;
-		process_step_stats($data[0]) if $doStats;
+	# determine format
+	unless (defined $wig_process_sub) {
+		my @data = split /\s+/, $line;
+		if (scalar @data == 4) {
+			$wig_process_sub = \&process_bedGraph;
+		}
+		elsif (scalar @data == 2) {
+			$wig_process_sub = \&process_variableStep;
+		}
+		elsif (scalar @data == 1) {
+			$wig_process_sub = \&process_fixedStep;
+		}
 	}
+	
+	# process
+	chomp $line;
+	&$wig_process_sub($line);
 }
 
 
@@ -206,9 +220,42 @@ else {
 	print STDOUT $statMessage if $statMessage;
 }
 
+sub process_bedGraph {
+	my @data = split "\t", shift;
+	return if ($skip and $data[0] =~ $skipregex);
+	$data[3] = process_score($data[3]);
+	die "undefined value! @data\n" if not defined $data[3];
+	$outfh->printf("%s\t%d\t%d\t%s\n", $data[0], $data[1], $data[2], $data[3]) 
+		if (defined $data[3] and $outfh);
+	$count++;
+	if ($doStats and defined $data[3]) {
+		my $length = $data[2] - $data[1];
+		$stats->{count} += $length;
+		$stats->{sumData} += ($length * $data[3]);
+		$stats->{sumSquares} += ( ($data[3] ** 2) * $length );
+		$stats->{minVal} = $data[3] if not defined $stats->{minVal};
+		$stats->{minVal} = $data[3] if $data[3] < $stats->{minVal};
+		$stats->{maxVal} = $data[3] if not defined $stats->{maxVal};
+		$stats->{maxVal} = $data[3] if $data[3] > $stats->{maxVal};
+	}
+}
 
+sub process_variableStep {
+	my @data = split /\s+/, shift; # could be either tab or space
+	$data[1] = process_score($data[1]);
+	$outfh->printf("%d %s\n", $data[0], $data[1]) if (defined $data[1] and $outfh);
+	$count++;
+	process_step_stats($data[1]) if $doStats;
+}
 
-# process
+sub process_fixedStep {
+	my $score = shift;
+	$score = process_score($score);
+	$outfh->printf("%s\n",$score) if (defined $score and $outfh);
+	$count++;
+	process_step_stats($score) if $doStats;
+}
+
 sub process_score {
 	my $v = shift; # score
 	if ($doNull and $v =~ /^(?:n.?[na])|(?:\-?inf)/i) {$v = 0}
@@ -222,18 +269,6 @@ sub process_score {
 	if ($places) {$v = sprintf($places, $v)};
 	return undef if ($noZeroes and $v == 0);
 	return $v;
-}
-
-sub process_bdg_stats {
-	return unless defined $_[3];
-	my $length = $_[2] - $_[1];
-	$stats->{count} += $length;
-	$stats->{sumData} += ($length * $_[3]);
-	$stats->{sumSquares} += ( ($_[3] ** 2) * $length );
-	$stats->{minVal} = $_[3] if not defined $stats->{minVal};
-	$stats->{minVal} = $_[3] if $_[3] < $stats->{minVal};
-	$stats->{maxVal} = $_[3] if not defined $stats->{maxVal};
-	$stats->{maxVal} = $_[3] if $_[3] > $stats->{maxVal};
 }
 
 sub process_step_stats {
