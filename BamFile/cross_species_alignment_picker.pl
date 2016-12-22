@@ -105,7 +105,7 @@ printf "   %d alignments mapped better than the second file\n", $count1best
 	if $do_pick;
 printf " There were %d mapped alignments in $file2\n", $file2count;
 printf "   %d alignments mapped better than the first file\n", $count2best 
-	;
+	if $do_pick;
 printf " There were %d equally mapped alignments\n", $countequal if $do_pick;
 
 if ($do_ortho and not $do_pick) {
