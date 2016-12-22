@@ -40,10 +40,16 @@ printf " Opened '$file' with %d columns and %d data rows\n",
 ## Prepare output file
 my $outfile = shift @ARGV || $Data->path . $Data->basename . '_FPKM.txt';
 my $Out = Bio::ToolBox::Data->new();
-foreach my $n (qw(GeneID Length)) {
+
+## Find columns
+my $gene_i = $Data->find_column('GeneID') || $Data->name_column;
+die " can't find GeneID or Name column\n" unless defined $gene_i;
+my $length_i = $Data->find_column('Length');
+die " can't find Length column\n" unless defined $length_i;
+
+## Copy columns
+foreach my $i ($gene_i, $length_i) {
 	# copy the geneID and length columns
-	my $i = $Data->find_column($n);
-	die "can't find $n column!\n" unless defined $i;
 	my $column = $Data->column_values($i);
 	$Out->add_column($column);
 }
@@ -55,7 +61,7 @@ my @indices = ask_user_for_index($Data, 'Enter the count columns  ');
 ## Calculate the FPKMs
 foreach my $index (@indices) {
 	
-	$Out->add_column( $Data->name($index) . '_FPKM');
+	my $new_index = $Out->add_column( $Data->name($index) . '_FPKM');
 	
 	# determine total number of counts for this dataset
 	# we're going line by line to check for potential non-integers
@@ -67,14 +73,15 @@ foreach my $index (@indices) {
 	} );
 	die sprintf("The sum of column %s is zero! Check your file!\n", 
 		$Data->name($index)) unless $total;
-
+	printf "  processing %s, total count $total\n", $Data->name($index);
+	
 	# calculate and store the fpkms
 	$Data->iterate( sub {
 		my $row = shift;
-		my $length = $row->value(1) || 1;  # how would a zero sneak in here? shouldn't happen 
+		my $length = $row->value($length_i) || 1;  # how would a zero sneak in here? shouldn't happen 
 		my $fpkm = ($row->value($index) * 1_000_000_000) / ($length * $total);
 		# put the calculated value in the Output table
-		$Out->value($row->row_index, $index, $fpkm);
+		$Out->value($row->row_index, $new_index, $fpkm);
 	} );
 }
 
