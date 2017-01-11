@@ -3,6 +3,10 @@
 use strict;
 use Bio::ToolBox::db_helper::bam; 
 
+# version 1.0 - initial version
+# version 1.1 - added option to write the duplicates to second bam file
+
+
 unless (@ARGV) {
 	print <<END;
 
@@ -18,7 +22,10 @@ read name.
 
 Bam files must be sorted by coordinate. Bam files will be indexed as necessary.
 
+Optionally provide a second output file for the discarded duplicate alignments.
+
 Usage: $0 <input.bam> <output.bam>
+       $0 <input.bam> <output.bam> <duplicates.bam>
 
 END
 	exit;
@@ -35,9 +42,21 @@ my $outbam = write_new_bam_file($outfile) or
 	die "unable to open output bam file $outfile! $!";
 	# this uses low level Bio::DB::Bam object
 
+# duplicates bam file
+my $dupfile = shift @ARGV || undef;
+my $dupbam;
+if ($dupfile) {
+	$dupbam = write_new_bam_file($dupfile) or 
+		die "unable to open output duplicate bam file $dupfile! $!";
+		# this uses low level Bio::DB::Bam object
+}
+
 # write header
 my $header = $sam->bam->header;
 $outbam->header_write($header);
+if ($dupbam) {
+	$dupbam->header_write($header);
+}
 
 #initialize counters
 my $totalCount = 0;
@@ -74,6 +93,12 @@ printf "
 ", $totalCount, $goodCount, $badCount;
 undef $outbam;
 check_bam_index($outfile);
+if ($dupbam) {
+	undef $dupbam;
+	check_bam_index($dupfile);
+}
+
+# end
 
 
 ### alignment callback
@@ -131,6 +156,11 @@ sub write_reads {
 			$outbam->write1( shift @sorted );
 			$goodCount++; # accepted read 
 			$badCount += scalar(@sorted); # bad reads
+			if ($dupbam) {
+				foreach my $a (@sorted) {
+					$dupbam->write1($a);
+				}
+			}
 		}
 	}
 	
