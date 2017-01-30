@@ -14,7 +14,7 @@
 use strict;
 use Getopt::Long;
 use Bio::ToolBox::Data '1.40';
-my $VERSION = 1.4;
+my $VERSION = 1.5;
 
 unless (@ARGV) {
 	print <<END;
@@ -68,6 +68,15 @@ my $Data = Bio::ToolBox::Data->new(in => $file) or
 	die "unable to open $file!\n";
 die "file is not VCF!!!\n" unless $Data->vcf;
 
+# check names
+my $nNameIndex = $Data->find_column($nName);
+my $tNameIndex = $Data->find_column($tName);
+unless ($nNameIndex and $tNameIndex) {
+	print "Unable to identify Normal sample '$nName' column!\n" unless $nNameIndex;
+	print "Unable to identify Tumor sample '$tName' column!\n" unless $tNameIndex;
+	print "Please check your VCF file and provide the correct sample names.\n";
+	exit;
+}
 
 
 # output file
@@ -88,31 +97,31 @@ while (my $line = $iterator->next_row) {
 	my ($tier, $indel);
 	
 	### check for FA or FREQ
-	if (exists $att->{$nName}{FREQ}) {
+	if (exists $att->{$nNameIndex}{FREQ}) {
 		# VarScan somatic attribute, convert to MuTect style FA for consistency
-		my $nFA = $att->{$nName}{FREQ};
+		my $nFA = $att->{$nNameIndex}{FREQ};
 		$nFA =~ s/\$$//;
 		$nFA /= 100;
-		$att->{$nName}{FA} = $nFA;
-		my $tFA = $att->{$tName}{FREQ};
+		$att->{$nNameIndex}{FA} = $nFA;
+		my $tFA = $att->{$tNameIndex}{FREQ};
 		$tFA =~ s/\$$//;
 		$tFA /= 100;
-		$att->{$tName}{FA} = $tFA;
+		$att->{$tNameIndex}{FA} = $tFA;
 	}
-	unless (exists $att->{$nName}{FA}) {
+	unless (exists $att->{$nNameIndex}{FA}) {
 		# No frequency of alternate
 		
 		# calculate FREQ attribute
 		my ($normal_FA, $tumor_FA);
-		if (exists $att->{$nName}{DP4}) {
+		if (exists $att->{$nNameIndex}{DP4}) {
 			# DP4 = ref-forward bases, ref-reverse, alt-forward and alt-reverse bases
-			my ($rf, $rr, $af, $ar) = split ',', $att->{$nName}{DP4}, 4;
+			my ($rf, $rr, $af, $ar) = split ',', $att->{$nNameIndex}{DP4}, 4;
 			$normal_FA = sprintf "%0.2f", ($af + $ar) / ($rf + $rr + $af + $ar);
-			($rf, $rr, $af, $ar) = split ',', $att->{$tName}{DP4}, 4;
+			($rf, $rr, $af, $ar) = split ',', $att->{$tNameIndex}{DP4}, 4;
 			$tumor_FA = sprintf "%0.2f", ($af + $ar) / ($rf + $rr + $af + $ar);
 		} 
 		
-		elsif (exists $att->{$nName}{TIR} or exists $att->{$nName}{TAR}) {
+		elsif (exists $att->{$nNameIndex}{TIR} or exists $att->{$nNameIndex}{TAR}) {
 			# Strelka attributes
 			
 			# determine data tier and type of indel
@@ -136,24 +145,24 @@ while (my $line = $iterator->next_row) {
 			# get the supporting number of alternate reads based on data tier and 
 			# somatic variant type
 			my ($nt1, $nt2) = split ',', # normal
-								$indel ? $att->{$nName}{TIR} : $att->{$nName}{TAR}, 
+								$indel ? $att->{$nNameIndex}{TIR} : $att->{$nNameIndex}{TAR}, 
 								2;
 			my ($tt1, $tt2) = split ',', # tumor
-								$indel ? $att->{$tName}{TIR} : $att->{$tName}{TAR}, 
+								$indel ? $att->{$tNameIndex}{TIR} : $att->{$tNameIndex}{TAR}, 
 								2;
 			
 			# calculate FREQ based on which data tier was used
 			# using the total depth DP as the denominator
 			if ($tier == 1) {
-				$normal_FA = $att->{$nName}{DP} ? 
-					sprintf "%0.2f", $nt1 / $att->{$nName}{DP} : 0;
-				$tumor_FA  = $att->{$tName}{DP} ? 
-					sprintf "%0.2f", $tt1 / $att->{$tName}{DP} : 0;
+				$normal_FA = $att->{$nNameIndex}{DP} ? 
+					sprintf "%0.2f", $nt1 / $att->{$nNameIndex}{DP} : 0;
+				$tumor_FA  = $att->{$tNameIndex}{DP} ? 
+					sprintf "%0.2f", $tt1 / $att->{$tNameIndex}{DP} : 0;
 			} elsif ($tier == 2) {
-				$normal_FA = $att->{$nName}{DP2} ? 
-					sprintf "%0.2f", $nt1 / $att->{$nName}{DP2} : 0;
-				$tumor_FA  = $att->{$tName}{DP2} ? 
-					sprintf "%0.2f", $tt1 / $att->{$tName}{DP2} : 0;
+				$normal_FA = $att->{$nNameIndex}{DP2} ? 
+					sprintf "%0.2f", $nt1 / $att->{$nNameIndex}{DP2} : 0;
+				$tumor_FA  = $att->{$tNameIndex}{DP2} ? 
+					sprintf "%0.2f", $tt1 / $att->{$tNameIndex}{DP2} : 0;
 			} else {
 				warn sprintf "unknown tier '$tier' for data line %s:%d\n",
 					$line->seq_id, $line->start;
@@ -162,110 +171,110 @@ while (my $line = $iterator->next_row) {
 			}
 		} 
 		
-		elsif (exists $att->{$nName}{AD}) {
+		elsif (exists $att->{$nNameIndex}{AD}) {
 			# AD = ref bases, alt bases
-			my ($ref, $alt) = split ',', $att->{$nName}{AD}, 2;
+			my ($ref, $alt) = split ',', $att->{$nNameIndex}{AD}, 2;
 			my $total = $ref + $alt;
 			$normal_FA = $total == 0 ? '0.00' : sprintf "%0.2f", $alt / $total;
-			($ref, $alt) = split ',', $att->{$tName}{AD}, 2;
+			($ref, $alt) = split ',', $att->{$tNameIndex}{AD}, 2;
 			$total = $ref + $alt;
 			$tumor_FA = $total == 0 ? '0.00' : sprintf "%0.2f", $alt / $total;
 		} 
 		
 		else {
-			warn "missing read depth identifiers for data line %s:%d\n",
+			warn sprintf "missing read depth identifiers for data line %s:%d\n",
 				$line->seq_id, $line->start;
 			$normal_FA = 0;
 			$tumor_FA  = 0;
 		}
 		
 		# push the new FA attribute
-		$att->{$nName}{FA} = $normal_FA;
-		$att->{$tName}{FA} = $tumor_FA;
+		$att->{$nNameIndex}{FA} = $normal_FA;
+		$att->{$tNameIndex}{FA} = $tumor_FA;
 	}
 	
 	### Check for GT
-	unless (exists $att->{$nName}{GT}) {
+	unless (exists $att->{$nNameIndex}{GT}) {
 		# stupid strelka doesn't put in genotype information
 		# since GT is usually first in attributes, we'll put it there
 		# normal genotype use the info NT key
 		if ($att->{INFO}{NT} =~ /ref/i) {
-			$att->{$nName}{GT} = '0/0';
+			$att->{$nNameIndex}{GT} = '0/0';
 		}
 		elsif ($att->{INFO}{NT} =~ /het/i) {
 			# info value SGT=ref->hom
-			$att->{$nName}{GT} = '0/1';
+			$att->{$nNameIndex}{GT} = '0/1';
 		}
 		elsif ($att->{INFO}{NT} =~ /hom$/i) {
 			# info value SGT=ref->hom
-			$att->{$nName}{GT} = '1/1';
+			$att->{$nNameIndex}{GT} = '1/1';
 		}
 		else {
 			warn sprintf "no Normal genotype key NT for data line %s:%d\n", 
 				$line->seq_id, $line->start;
-			$att->{$nName}{GT} = './.';
+			$att->{$nNameIndex}{GT} = './.';
 		}
 		
 		# tumor genotype uses the info key SGT
 		if ($att->{INFO}{SGT} =~ /het$/i) {
 			# info value SGT=ref->het;
-			$att->{$tName}{GT} = '0/1';
+			$att->{$tNameIndex}{GT} = '0/1';
 		}
 		elsif ($att->{INFO}{SGT} =~ /hom$/i) {
 			# info value SGT=ref->hom
-			$att->{$tName}{GT} = '1/1';
+			$att->{$tNameIndex}{GT} = '1/1';
 		}
 		else {
 			warn sprintf "no Normal genotype key SGT for data line %s:%d\n", 
 				$line->seq_id, $line->start;
-			$att->{$tName}{GT} = './.';
+			$att->{$tNameIndex}{GT} = './.';
 		}
 	}
 	
 	### Check for depth
-	if (not exists $att->{$nName}{AD} and not exists $att->{$nName}{DP4}) {
+	if (not exists $att->{$nNameIndex}{AD} and not exists $att->{$nNameIndex}{DP4}) {
 		# this should only be for the Strelka stuff
 		$tier ||= 1; # in case it wasn't defined for some reason
 		
 		# reference count
-		my $normalRefCount = $tier == 1 ? $att->{$nName}{DP} : $att->{$nName}{DP2};
-		my $tumorRefCount  = $tier == 1 ? $att->{$tName}{DP} : $att->{$tName}{DP2};
+		my $normalRefCount = $tier == 1 ? $att->{$nNameIndex}{DP} : $att->{$nNameIndex}{DP2};
+		my $tumorRefCount  = $tier == 1 ? $att->{$tNameIndex}{DP} : $att->{$tNameIndex}{DP2};
 		
 		# alternate count
 		my ($normalAltCount, $tumorAltCount);
 			# we'll need to split the appropriate FORMAT attribute into tier1,tier2
 			# then take the appropriate index for the tier
 		if ($indel) {
-			$normalAltCount = (split ',', $att->{$nName}{TIR}, 2)[ $tier - 1 ];
-			$tumorAltCount  = (split ',', $att->{$tName}{TIR}, 2)[ $tier - 1 ];
+			$normalAltCount = (split ',', $att->{$nNameIndex}{TIR}, 2)[ $tier - 1 ];
+			$tumorAltCount  = (split ',', $att->{$tNameIndex}{TIR}, 2)[ $tier - 1 ];
 		} 
 		else {
-			$normalAltCount = (split ',', $att->{$nName}{TAR}, 2)[ $tier - 1 ];
-			$tumorAltCount  = (split ',', $att->{$tName}{TAR}, 2)[ $tier - 1 ];
+			$normalAltCount = (split ',', $att->{$nNameIndex}{TAR}, 2)[ $tier - 1 ];
+			$tumorAltCount  = (split ',', $att->{$tNameIndex}{TAR}, 2)[ $tier - 1 ];
 		}
 		
 		# put back
-		$att->{$nName}{AD} = "$normalRefCount,$normalAltCount";
-		$att->{$tName}{AD} = "$tumorRefCount,$tumorAltCount";
+		$att->{$nNameIndex}{AD} = "$normalRefCount,$normalAltCount";
+		$att->{$tNameIndex}{AD} = "$tumorRefCount,$tumorAltCount";
 	}
-	elsif (not exists $att->{$nName}{AD} and exists $att->{$nName}{DP4}) {
+	elsif (not exists $att->{$nNameIndex}{AD} and exists $att->{$nNameIndex}{DP4}) {
 		# this should be for SomaticSniper 
 		# this is a temporary fix, probably should not be kept permanently
 		# convert AD ref,alt from DP4 
-		my @nC = split ',', $att->{$nName}{DP4}, 4;
-		my @tC = split ',', $att->{$tName}{DP4}, 4;
-		$att->{$nName}{AD} = sprintf("%d,%d", $nC[0] + $nC[1], $nC[2] + $nC[3]);
-		$att->{$tName}{AD} = sprintf("%d,%d", $tC[0] + $tC[1], $tC[2] + $tC[3]);
+		my @nC = split ',', $att->{$nNameIndex}{DP4}, 4;
+		my @tC = split ',', $att->{$tNameIndex}{DP4}, 4;
+		$att->{$nNameIndex}{AD} = sprintf("%d,%d", $nC[0] + $nC[1], $nC[2] + $nC[3]);
+		$att->{$tNameIndex}{AD} = sprintf("%d,%d", $tC[0] + $tC[1], $tC[2] + $tC[3]);
 	}
-	elsif (exists $att->{$nName}{AD} and 
-		exists $att->{$nName}{RD} and 
-		exists $att->{$nName}{DP4}
+	elsif (exists $att->{$nNameIndex}{AD} and 
+		exists $att->{$nNameIndex}{RD} and 
+		exists $att->{$nNameIndex}{DP4}
 	) {
 		# VarScan is using separate counts for everything
-		$att->{$nName}{AD} = sprintf("%d,%d", $att->{$nName}{RD}, 
-			$att->{$nName}{AD});
-		$att->{$tName}{AD} = sprintf("%d,%d", $att->{$tName}{RD}, 
-			$att->{$tName}{AD});
+		$att->{$nNameIndex}{AD} = sprintf("%d,%d", $att->{$nNameIndex}{RD}, 
+			$att->{$nNameIndex}{AD});
+		$att->{$tNameIndex}{AD} = sprintf("%d,%d", $att->{$tNameIndex}{RD}, 
+			$att->{$tNameIndex}{AD});
 		$change_AD_comment++;
 	}
 	
@@ -274,10 +283,10 @@ while (my $line = $iterator->next_row) {
 		# we need to delete extraneous attributes
 		
 		# sample columns
-		foreach (keys %{$att->{$nName}}) {
+		foreach (keys %{$att->{$nNameIndex}}) {
 			next if ($_ eq 'GT' or $_ eq 'AD' or $_ eq 'FA');
-			delete $att->{$nName}{$_};
-			delete $att->{$tName}{$_};
+			delete $att->{$nNameIndex}{$_};
+			delete $att->{$tNameIndex}{$_};
 		}
 		
 		# INFO column
