@@ -219,6 +219,12 @@ foreach my $file (@ARGV) {
 			} elsif ($variant =~ /non.?frame.?shift/) {
 				push @{ $hash->{$gene}{nonframeshift_indel} }, "$sampleid:$start";
 				$hash->{$gene}{count}++;
+			} elsif ($variant =~ /in.?frame.?deletion/) {
+				push @{ $hash->{$gene}{nonframeshift_indel} }, "$sampleid:$start";
+				$hash->{$gene}{count}++;
+			} elsif ($variant =~ /in.?frame.?insertion/) {
+				push @{ $hash->{$gene}{nonframeshift_indel} }, "$sampleid:$start";
+				$hash->{$gene}{count}++;
 			} elsif ($variant =~ /frame.?shift/) {
 				push @{ $hash->{$gene}{frameshift} }, "$sampleid:$start";
 				$hash->{$gene}{count}++;
