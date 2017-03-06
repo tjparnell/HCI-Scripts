@@ -14,7 +14,7 @@
 use strict;
 use Getopt::Long;
 use Bio::ToolBox::Data '1.40';
-my $VERSION = 1.5;
+my $VERSION = 1.6;
 
 unless (@ARGV) {
 	print <<END;
@@ -24,8 +24,8 @@ Should properly handle somatic VCF files from MuTect, SomaticSniper,
 Strelka, VarScan, and scalpel.
 
 It performs the following functions:
-  - adds missing alternate fraction (FA or FREQ) attribute (Strelka and 
-    SomaticSniper). Changes FREQ to FA (VarScan)
+  - adds missing alternate frequency (FREQ) attribute (Strelka and 
+    SomaticSniper). Changes FA to FREQ (MuTect)
   - adds missing genotype GT attribute (Strelka)
   - adds ref,alt allele depth (AD) attribute (Strelka, VarScan)
   - optionally discard excess sample attributes, leaving only GT:AD:FA
@@ -39,7 +39,7 @@ Options:
   -t <NAME>             Tumor sample name, default TUMOR
   -n <NAME>             Normal sample name, default NORMAL
   -m                    flag to minimize to just three sample attributes 
-                        (GT:AD:FA) and remove all INFO fields
+                        (GT:AD:DP:FREQ) and remove all INFO fields
 END
 	exit;
 }
@@ -98,17 +98,23 @@ while (my $line = $iterator->next_row) {
 	
 	### check for FA or FREQ
 	if (exists $att->{$nNameIndex}{FREQ}) {
-		# VarScan somatic attribute, convert to MuTect style FA for consistency
+		# VarScan somatic attribute
+		# convert decimal fraction for consistency
 		my $nFA = $att->{$nNameIndex}{FREQ};
 		$nFA =~ s/\$$//;
 		$nFA /= 100;
-		$att->{$nNameIndex}{FA} = $nFA;
+		$att->{$nNameIndex}{FREQ} = $nFA;
 		my $tFA = $att->{$tNameIndex}{FREQ};
 		$tFA =~ s/\$$//;
 		$tFA /= 100;
 		$att->{$tNameIndex}{FA} = $tFA;
 	}
-	unless (exists $att->{$nNameIndex}{FA}) {
+	elsif (exists $att->{$nNameIndex}{FA}) {
+		# MuTect style FA for frequency
+		$att->{$nNameIndex}{FREQ} = $att->{$nNameIndex}{FA};
+		$att->{$tNameIndex}{FREQ} = $att->{$tNameIndex}{FA};
+	}
+	unless (exists $att->{$nNameIndex}{FREQ}) {
 		# No frequency of alternate
 		
 		# calculate FREQ attribute
@@ -188,9 +194,9 @@ while (my $line = $iterator->next_row) {
 			$tumor_FA  = 0;
 		}
 		
-		# push the new FA attribute
-		$att->{$nNameIndex}{FA} = $normal_FA;
-		$att->{$tNameIndex}{FA} = $tumor_FA;
+		# push the new FREQ attribute
+		$att->{$nNameIndex}{FREQ} = $normal_FA;
+		$att->{$tNameIndex}{FREQ} = $tumor_FA;
 	}
 	
 	### Check for GT
@@ -278,13 +284,28 @@ while (my $line = $iterator->next_row) {
 		$change_AD_comment++;
 	}
 	
+	# add the depth tag
+	if (not exists $att->{$nNameIndex}{DP} or 
+		(exists $att->{$nNameIndex}{DP2} and $minimize)
+	) {
+		# I think all the callers put this in, but just in case....
+		# we can use the AD tag we just put in
+		# Strelka DP and DP2 means the reference depth, not total, so if we're minimizing
+		# adjust as necessary
+		my ($nRef, $nAlt) = split(/,/, $att->{$nNameIndex}{AD});
+		$att->{$nNameIndex}{DP} = $nRef + $nAlt;
+		my ($tRef, $tAlt) = split(/,/, $att->{$tNameIndex}{AD});
+		$att->{$tNameIndex}{DP} = $tRef + $tAlt;
+	} 
+	
+	
 	### update the line
 	if ($minimize) {
 		# we need to delete extraneous attributes
 		
 		# sample columns
 		foreach (keys %{$att->{$nNameIndex}}) {
-			next if ($_ eq 'GT' or $_ eq 'AD' or $_ eq 'FA');
+			next if ($_ eq 'GT' or $_ eq 'AD' or $_ eq 'FREQ' or $_ eq 'DP');
 			delete $att->{$nNameIndex}{$_};
 			delete $att->{$tNameIndex}{$_};
 		}
@@ -306,7 +327,8 @@ my $vcf_head = $Data->vcf_headers;
 if ($minimize) {
 	# delete unnecessary FORMAT keys
 	foreach my $key (keys %{ $vcf_head->{FORMAT} }) {
-		next if ($key eq 'GT' or $key eq 'AD' or $key eq 'FA');
+		next if ($key eq 'GT' or $key eq 'AD' or $key eq 'DP');
+		# we'll put in our own FREQ header below, just in case
 		delete $vcf_head->{FORMAT}{$key};
 	}
 
@@ -317,17 +339,22 @@ if ($minimize) {
 }
 	
 unless (exists $vcf_head->{FORMAT}{GT}) {
-	# add FA metadata line
+	# add GT metadata line
 	$vcf_head->{FORMAT}{GT} = q(ID=GT,Number=1,Type=String,Description="Genotype");
 }
-unless (exists $vcf_head->{FORMAT}{FA}) {
-	# add FA metadata line
-	$vcf_head->{FORMAT}{FA} = q(<ID=FA,Number=A,Type=Float,Description="Allele fraction of the alternate allele with regard to reference">);
+unless (exists $vcf_head->{FORMAT}{FREQ}) {
+	# add FREQ metadata line
+	$vcf_head->{FORMAT}{FREQ} = q(<ID=FREQ,Number=A,Type=Float,Description="Allele fraction of the alternate allele out of total">);
+}
+unless (exists $vcf_head->{FORMAT}{DP}) {
+	# add DP metadata line
+	$vcf_head->{FORMAT}{DP} = q(<ID=DP,Number=1,Type=Integer,Description="Approximate total read depth after filtering">);
 }
 if ($change_AD_comment or not exists $vcf_head->{FORMAT}{AD}) {
 	# add FA metadata line
 	$vcf_head->{FORMAT}{AD} = q(ID=AD,Number=.,Type=Integer,Description="Allelic depths for the ref and alt alleles in the order listed");
 }
+
 	
 # rewrite the VCF metadata headers
 $Data->rewrite_vcf_headers;
