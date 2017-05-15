@@ -14,7 +14,7 @@
 use strict;
 use Getopt::Long;
 use Bio::ToolBox::Data '1.41';
-my $VERSION = 1.1;
+my $VERSION = 1.2;
 
 unless (scalar @ARGV >= 2) {
 	print <<END;
@@ -31,9 +31,10 @@ Example:
   wget http://hgdownload.soe.ucsc.edu/goldenPath/rn6/database/chromInfo.txt.gz
 You could also use a samtools fasta index .fai file. 
 
-Supports any recognizable annotation table (gtf gff3 bed refFlat genePred vcf).
+Supports any recognizable annotation table (gtf gff3 bed refFlat genePred vcf)
+and fasta files.
 
-Output file is optional; it will append _ucsc to the input basename.
+Output file is optional; it will append .ucsc to the input basename.
 
 It will report any unmatched chromosomes that couldn't be converted. 
 Check your chromosome file to see if these, or something like it, is 
@@ -49,7 +50,14 @@ my $lookup = make_lookup_table();
 
 my $infile = shift @ARGV;
 my $outfile = shift @ARGV || undef;
-process();
+if ($infile =~ /\.fa(?:sta)?(?:\.gz)?$/i) {
+	# input is a fasta file
+	process_fasta();
+}
+else {
+	# otherwise assume some sort of gene table
+	process_table();
+}
 
 
 
@@ -88,7 +96,7 @@ sub make_lookup_table {
 	return \%lookup;
 }
 
-sub process {
+sub process_table {
 	my $Stream = Bio::ToolBox::Data->new(
 		stream => 1,
 		in     => $infile,
@@ -97,7 +105,7 @@ sub process {
 	
 	# make output
 	unless ($outfile) {
-		$outfile = $Stream->path . $Stream->basename . '_ucsc' . $Stream->extension;
+		$outfile = $Stream->path . $Stream->basename . '.ucsc' . $Stream->extension;
 	}
 	my $Out = $Stream->duplicate($outfile) or 
 		die " unable to open output stream for file $outfile! $!\n";
@@ -157,3 +165,56 @@ sub process {
 			join("\n", keys %notfound);
 	}
 }
+
+sub process_fasta {
+	# open generic file handle to the input fasta file
+	my $fh = Bio::ToolBox::Data->open_to_read_fh($infile) or 
+		die " unable to open input file '$infile' $! \n";
+	
+	# open output file handle
+	unless ($outfile) {
+		$outfile = $infile;
+		$outfile =~ s/\.fa(sta)?/.ucsc.fasta/g;
+	}
+	my $out = Bio::ToolBox::Data->open_to_write_fh($outfile) or
+		die " unable to open output file '$outfile' $!\n";
+	
+	# conversion
+	my %notfound;
+	while (my $line = $fh->getline) {
+		if (substr($line,0,1) eq '>') {
+			# a fasta header line
+			chomp($line); # because regex usually removes it anyway
+			if ($line =~ /^>([\w\-\.]+)(\s+.+)?$/) {
+				my $chr = $1;
+				my $desc = $2;
+				if (exists $lookup->{lc $chr}) {
+					$chr = $lookup->{lc $chr};
+				}
+				else {
+					$notfound{$chr}++;
+				}
+				$out->print(">$chr$desc\n");
+			}
+			else {
+				warn "skipping malformed fasta header line '$line'\n";
+				$out->print("$line\n");
+			}
+		}
+		else {
+			# a sequence line
+			$out->print($line);
+		}
+	}
+	$fh->close;
+	$out->close;
+	printf "wrote %s\n", $outfile;
+	if (%notfound) {
+		printf "could not convert the following chromosomes:\n%s\n", 
+			join("\n", keys %notfound);
+	}
+}
+
+
+
+
