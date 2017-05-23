@@ -61,7 +61,10 @@ my @indices = ask_user_for_index($Data, 'Enter the count columns  ');
 ## Calculate the FPKMs
 foreach my $index (@indices) {
 	
-	my $new_index = $Out->add_column( $Data->name($index) . '_FPKM');
+	my $name = $Data->name($index);
+	$name =~ s/\.bam$//i; # strip the annoying bam extension
+	$name .= '_FPKM';
+	my $new_index = $Out->add_column($name);
 	
 	# determine total number of counts for this dataset
 	# we're going line by line to check for potential non-integers
@@ -69,7 +72,7 @@ foreach my $index (@indices) {
 	$Data->iterate( sub {
 		my $row = shift;
 		my $v = $row->value($index);
-		$total += $v if $v =~ /^\d+$/;
+		$total += $v;
 	} );
 	die sprintf("The sum of column %s is zero! Check your file!\n", 
 		$Data->name($index)) unless $total;
