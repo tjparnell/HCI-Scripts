@@ -97,7 +97,10 @@ if (defined $places) {
 }
 
 # chromosome skipping regex
-my $skipregex = qr($skip);
+my $skipregex;
+if ($skip) {
+	$skipregex = qr($skip);
+}
 
 # open file handles
 my ($infh, $outfh);
@@ -158,7 +161,8 @@ while (my $line = $infh->getline) {
 		# a step definition line
 		if ($line =~ /chrom=([\w\-\.]+)/) {
 			my $chrom = $1;
-			if ($chrom =~ $skipregex) {
+			if ($skipregex and $chrom =~ $skipregex) {
+				print STDERR "skipping chromosome $chrom\n";
 				$chrom_skip = 1;
 			}
 			else {
@@ -211,7 +215,7 @@ if ($doStats) {
 	my $basecount = $stats->{count};
 	my $min   = $stats->{minVal};
 	my $max   = $stats->{maxVal};
-	my $mean  = sprintf("%.05f", $stats->{sumData} / $stats->{count});
+	my $mean  = $stats->{count} ? sprintf("%.05f", $stats->{sumData} / $stats->{count}) : 0;
 	my $stddev = sprintf("%.05f", sqrt(binVariance()) );
 	$statMessage = <<STATS; 
 basesCovered: $basecount
