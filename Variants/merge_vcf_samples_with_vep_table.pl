@@ -14,8 +14,9 @@
 use strict;
 use Getopt::Long;
 use Bio::ToolBox::Data '1.40';
+use Bio::ToolBox::utility;
 
-my $VERSION = 1.2;
+my $VERSION = 1.3;
 
 unless (@ARGV) {
 	print <<END;
@@ -24,6 +25,9 @@ A script to merge the sample columns from a VCF file into an Ensembl
 VEP output annotation table. VEP does not preserve sample information. 
 This script remedies this problem. Only specific sample tags are 
 included, on the assumption that not all are required.
+
+If no sample columns are present in the VCF file, then the tags are 
+taken from the INFO column instead.
 
 The sample information is put in behind the first ID column.
 
@@ -37,6 +41,14 @@ Options:
   --tags <GT,AD>        Provide a comma delimited list of attribute tags 
                         from the sample column to include in the output.
                         If not defined, then the default is GT:AD.
+  --samples <index>     Provide the 0-based index(es) of the sample columns 
+                        from which to collect the tag information. Provide 
+                        a comma-delimited list, range, or specify the option 
+                        multiple times. The INFO field is column 7, and 
+                        sample columns begin at column 9. The default is 
+                        to take all samples present in the VCF file.
+  --samples ask         Indicate that the sample columns should be interactively 
+                        chosen from a list of available columns in the VCF.
 END
 	exit;
 }
@@ -45,12 +57,14 @@ my $vcffile;
 my $infile;
 my $outfile;
 my $tagList = 'GT,AD';
+my @samples;
 
 GetOptions( 
 	'input=s'   => \$infile, # input table
 	'vcf=s'     => \$vcffile, # input vcf
 	'output=s'  => \$outfile, # output vcf
 	'tags=s'    => \$tagList, # list of attribute tags
+	'samples=s' => \@samples, # list of samples to collect from
 ) or die "bad options!\n";
 
 my @tags = split /,/, $tagList;
@@ -66,7 +80,24 @@ die "$vcffile is not a VCF file!\n" unless $vcfData->vcf;
 
 
 # get the samples
-my @samples = (9 .. $vcfData->last_column);
+if (@samples) {
+	if (scalar(@samples) == 1 and $samples[0] =~ /[,\-]/) {
+		@samples = parse_list(shift @samples);
+	}
+	elsif ($samples[0] eq 'ask') {
+		shift @samples;
+		@samples = ask_user_for_index($vcfData, " Enter the desired sample columns:  ");
+	}
+} 
+else {
+	if ($vcfData->last_column >= 9) {
+		@samples = (9 .. $vcfData->last_column);
+	}
+	else {
+		print " no samples found in vcf file! Using INFO field instead\n";
+		push @samples, 7;
+	}
+}
 my @sampleNames = map {$vcfData->name($_)} @samples;
 my %sampleInfo;
 $vcfData->iterate(\&store_sample_data);
@@ -113,6 +144,9 @@ if ($noFind) {
 
 # reorder the columns
 $Data->reorder_column(0, @new_i, 1 .. $last);
+
+# add sample information comments
+$Data->add_comment(sprintf "Sample Information tags = %s", join(':', @tags));
 
 # save the file
 my $saved;
