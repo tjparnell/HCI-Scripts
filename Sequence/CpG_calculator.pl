@@ -6,7 +6,6 @@ use strict;
 use Getopt::Long;
 use Pod::Usage;
 use Bio::ToolBox::Data;
-use Bio::ToolBox::db_helper qw(open_db_connection);
 use Bio::ToolBox::utility;
 my $parallel;
 eval {
@@ -14,13 +13,7 @@ eval {
 	require Parallel::ForkManager;
 	$parallel = 1;
 };
-my $BAM_OK;
-eval { 
-	# we want access to Bio::DB::Sam::Fai
-	require Bio::DB::Sam;
-	$BAM_OK = 1;
-};
-my $VERSION = '1.33';
+my $VERSION = '1.51';
 
 print "\n This program will calculate observed & expected CpGs\n\n";
 
@@ -144,7 +137,7 @@ else {
 }
 
 # open database in case we need to do something, like index a fasta
-my $db = open_sequence_db(0) or 
+my $db =  $Data->open_database($database) or 
 	die " unable to open database connection to '$database'!\n";
 
 
@@ -216,7 +209,7 @@ sub parallel_execution {
 		
 		# re-open database objects to make them clone safe
 		# pass true to avoid cached database objects
-		$db = open_sequence_db(1);
+		$db = $Data->open_database($database, 1);
 		
 		# Collect the data
 		process_regions();
@@ -277,12 +270,11 @@ sub process_regions {
 		# get the region subsequence
 		# we are using our own database and not $Data's internal database connection
 		# since we might be using the faster Bio::DB::Sam::Fai module
-		my $seq = $db->seq(
-			$row->seq_id,
-			$row->start,
-			$row->end + 1,
+		my $seq = $row->get_sequence(
 			# we add 1 bp so that we can count CpG that cross a window border
-		) || undef;
+			end => $row->end + 1, 
+			db  => $db,
+		);
 		unless ($seq) {
 			# no sequence, possibly because of difference in chromosome name convention?
 			my $chrom = $row->seq_id;
@@ -293,12 +285,11 @@ sub process_regions {
 				$chrom = "chr$chrom";
 			}
 			# try again with different chromosome name
-			$seq = $db->seq(
-				$chrom,
-				$row->start,
-				$row->end + 1,
-				# we add 1 bp so that we can count CpG that cross a window border
-			) || undef;
+			$seq = $row->seq(
+				seq_id => $chrom,
+				end    => $row->end + 1,
+				db     => $db,
+			);
 		}
 		unless ($seq) {
 			# this may happen if 0 or >1 chromosomes match the name
@@ -357,27 +348,6 @@ sub process_regions {
 		}
 	} );
 	
-}
-
-
-# special sub to open a database or sequence file
-# with option to open a genomic fasta file using a fast sequence accessor
-sub open_sequence_db {
-	my $nocache = shift || 0;
-	my $db;
-	print "Bam status is $BAM_OK\n";
-	if ($database =~ /\.fa(?:sta)?$/i and $BAM_OK) {
-		# this is a limited but very fast sequence accessor
-		# based on samtools fasta index
-		print "opening Fai db\n";
-		$db = Bio::DB::Sam::Fai->open($database);
-	}
-	else {
-		# otherwise we use a standard database connection
-		print "opening ordinary db\n";
-		$db = open_db_connection($database, $nocache);
-	}
-	return $db;
 }
 
 
