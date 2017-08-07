@@ -16,6 +16,16 @@ use Getopt::Long;
 use IO::File;
 use IO::Handle;
 
+# version
+# 1.0 initial release
+# 1.1 add absolute option and optimize parsing
+# 1.2 streamline wig format processing, option to skip chromosomes
+# 1.3 bug fixes
+# 1.4 add chromosome apply regex
+my $VERSION = 1.4;
+
+
+
 unless (@ARGV) {
 	print <<END;
 
@@ -28,6 +38,9 @@ in which the score is manipulated. If they are not in the order you want, you
 may have to pipe to sequential instances. Use 'stdin' and 'stdout' for filenames.
 Use an equal sign to define options with negative values, e.g. --mult=-1
 
+BIGWIG files: The UCSC bigWigToWig and wigToBigWig utilities accept 'stdin' 
+and 'stdout' as file names, so you can pipe out and in to bigWig formats. 
+
 Usage: $0 [options] -i <file1.wig> -o <file1.out.wig>
 Options: 
   --in <file>      Input file. Accepts gz compression. Accepts 'stdin'.
@@ -35,6 +48,10 @@ Options:
                    Optional if all you want is to calculate statistics.
   --skip <regex>   Discard lines where chromosomes match the regular 
                    expression. Example: 'chrM|chrUn|random'
+                   Good for removing chromosomes from analysis and/or wig.
+  --apply <regex>  Apply manipulations or statistics ONLY to chromosomes 
+                   that match the regular expression, leaving other lines 
+                   untouched. Example: 'chrX'
   --null           Convert null, NA, N/A, NaN, inf values to 0
   --delog <int>    Delog values of base [int], usually 2 or 10
   --abs            Convert to the absolute value 
@@ -46,7 +63,8 @@ Options:
   --place <int>    Format the score to the given number of decimal positions
   --zero           Discard lines with zero values
   --stats          Calculate statistics across the genome at base pair resolution.
-                   Statistics are calculated after above processing.
+                   Statistics are calculated after the above processing. Only 
+                   applied chromosomes are calculated.
 END
 	exit;
 }
@@ -55,6 +73,7 @@ END
 my $infile;
 my $outfile;
 my $skip;
+my $apply;
 my $doNull = 0;
 my $deLogValue;
 my $doAbsolute = 0;
@@ -70,6 +89,7 @@ GetOptions(
 	'input=s'       => \$infile,
 	'output=s'      => \$outfile,
 	'skip=s'        => \$skip,
+	'apply=s'       => \$apply,
 	'null!'         => \$doNull,
 	'delog=i'       => \$deLogValue,
 	'abs!'          => \$doAbsolute,
@@ -97,10 +117,14 @@ if (defined $places) {
 }
 
 # chromosome skipping regex
-my $skipregex;
+my ($skip_regex, $apply_regex);
 if ($skip) {
-	$skipregex = qr($skip);
+	$skip_regex = qr($skip);
 }
+if ($apply) {
+	$apply_regex = qr($apply);
+}
+
 
 # open file handles
 my ($infh, $outfh);
@@ -143,6 +167,7 @@ my $stats = {
 my $count = 0;
 my $span = 1;
 my $chrom_skip = 0;
+my $chrom_ignore = 0;
 my $wig_process_sub;
 while (my $line = $infh->getline) {
 	# look at the first characters to determine the type of line we have
@@ -160,13 +185,21 @@ while (my $line = $infh->getline) {
 	elsif ($prefix eq 'varia' or $prefix eq 'fixed') {
 		# a step definition line
 		if ($line =~ /chrom=([\w\-\.]+)/) {
+			# check the chromosome
 			my $chrom = $1;
-			if ($skipregex and $chrom =~ $skipregex) {
+			if ($skip_regex and $chrom =~ $skip_regex) {
 				print STDERR "skipping chromosome $chrom\n";
 				$chrom_skip = 1;
 			}
 			else {
 				$chrom_skip = 0;
+			}
+			if ($apply and $chrom !~ $apply_regex) {
+				print STDERR "ignoring chromosome $chrom\n";
+				$chrom_ignore = 1;
+			}
+			else {
+				$chrom_ignore = 0;
 			}
 		}
 		if ($line =~ /span=(\d+)/i) {
@@ -184,6 +217,12 @@ while (my $line = $infh->getline) {
 	
 	# skipping current chromosome
 	next if $chrom_skip;
+	
+	# ignoring current chromosome
+	if ($chrom_ignore) {
+		$outfh->print($line) if $outfh;
+		next;
+	}
 	
 	# determine format
 	unless (defined $wig_process_sub) {
@@ -237,7 +276,12 @@ else {
 
 sub process_bedGraph {
 	my @data = split "\t", shift;
-	return if ($skip and $data[0] =~ $skipregex);
+	return if ($skip and $data[0] =~ $skip_regex);
+	if ($apply and $data[0] !~ $apply_regex) {
+		$outfh->printf("%s\t%d\t%d\t%s\n", $data[0], $data[1], $data[2], $data[3]) 
+			if $outfh;
+		return;
+	}
 	$data[3] = process_score($data[3]);
 	die "undefined value! @data\n" if not defined $data[3];
 	$outfh->printf("%s\t%d\t%d\t%s\n", $data[0], $data[1], $data[2], $data[3]) 
