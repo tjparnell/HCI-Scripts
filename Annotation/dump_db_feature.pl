@@ -6,7 +6,7 @@ use strict;
 use Getopt::Long;
 use Data::Dumper;
 use Bio::ToolBox::db_helper qw(
-	get_feature
+	get_db_feature
 );
 
 my $help = <<HELP;
@@ -34,7 +34,7 @@ GetOptions(
 	'id=i'      => \$id,
 ) or die $help;
 
-my $f = get_feature(
+my $f = get_db_feature(
 	db   => $database,
 	id   => $id,
 	name => $name,
@@ -42,8 +42,8 @@ my $f = get_feature(
 );
 
 if ($f) {
-	my @s = $f->get_SeqFeatures;
-	$f->add_segment(@s); # this will add the subfeatures, but is not recursive
+# 	my @s = $f->get_SeqFeatures;
+# 	$f->add_segment(@s); # this will add the subfeatures, but is not recursive
 	print Dumper($f) . "\n";
 # 	foreach (@s) {print Dumper($_) . "\n"}
 	# my $f2 = $f->clone;
