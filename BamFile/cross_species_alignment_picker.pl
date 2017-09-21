@@ -13,12 +13,16 @@
 
 use strict;
 use Getopt::Long;
-use Bio::DB::Sam;
+use Bio::ToolBox::db_helper 1.50 qw(
+	open_db_connection 
+	$BAM_ADAPTER
+);
 
-my $VERSION = 1.2;
+my $VERSION = 1.3;
 # version 1.0 used mapping quality score and number of cigar operations
 # version 1.1 uses alignment score and sum of mismatches and cigar operations
 # version 1.2 improves text output to make counts less confusing
+# version 1.3 add support for other aligner AS tags and make bam adapter agnostic
 
 my $description = <<DESCRIPTION;
 
@@ -29,37 +33,47 @@ are aligned to each species index. Unique species alignments are kept, while
 alignments matching to both species are either discarded, written to a cross 
 species file, or assigned to one of the two species.
 
-Provide two bam files representing alignments to each species index. The 
-bam files should have unique alignments only; only the first occurence of 
-multiple alignments will be retained. Bam files do not need to be sorted, 
-but any sort order will be maintained. Unmapped reads are ignored and 
-discarded.
+Provide two bam files representing alignments to each species index. Bam files 
+do not need to be sorted, but any sort order will be maintained. Alignments 
+marked as supplementary, secondary, or unmapped are silently discarded; 
+everything else is retained. Paired-end alignments are not currently 
+supported. 
 
-An option is available to pick the best alignment based on one of two 
-criteria: the alignment score (AS tag, lower is better), or the sum of 
-the number of mismatches (NM tag) and the number of CIGAR operations 
-(including insertions, deletions, soft and hard trims). Alignments 
-equal in all scores are considered orthologous.
+Alignments mapping to both species may be picked as to the best alignment 
+based on two tests of three criteria (one test isn't always enough). These  
+tests include the following:
+    1. Alignment score, stored as the AS attribute tag. This number is 
+       aligner specific. In most aligners, the higher score is a better  
+       alignment. The exception is Novoalign, where lower alignment 
+       score is better.
+    2. The number of mismatchs, stored as the NM attribute tag. This 
+       is added to the number of CIGAR string operations, which can 
+       include insertions, deletions, and trims. Presumably, a lower 
+       number of mismatches and operations is a better alignment. 
 
+Alignments equal in the metric score are considered orthologous.
 Othologous reads mapping to both indices can either be discarded (default) 
 or written to a second bam file. When the best pick option is enabled, 
 the equivalently mapping files are written to the orthologous bam file.
 
-Ouput bam files are appended with the extension .unique.bam and 
-.orthologous.bam.
+For each input bam file, a .unique.bam file is written. If specified, 
+orthologous files are written to a second output bam file, .orthologous.bam.
 
 DESCRIPTION
+
 my $usage = <<USAGE;
 
 Usage: $0 [options] file1.bam file2.bam 
 
 Options:
-	--ortho     Write a second bam file with all orthologous or 
-	            equally mapping alignments
-	--pick      Assign the best alignment to one species based on 
-	            alignment metrics
+    --ortho     Write a second bam file with all orthologous or 
+                equally mapping alignments
+    --pick      Assign the best alignment to one species based on 
+                the alignment test
+    --low       The lower Alignment Score wins (Novoalign)
 
 USAGE
+
 
 
 ### Options
@@ -67,7 +81,9 @@ USAGE
 	# so gotta check if we have options or not
 my $do_ortho = 0;
 my $do_pick = 0;
+my $low_score;
 my ($file1, $file2);
+
 if (scalar @ARGV == 0) {
 	print $description . $usage;
 	exit 0;
@@ -79,13 +95,17 @@ elsif (scalar @ARGV > 2) {
 	GetOptions( 
 		'ortho!'     => \$do_ortho,
 		'pick!'      => \$do_pick,
+		'low!'       => \$low_score,
+		'bam=s'      => \$BAM_ADAPTER,
 	) or die "bad options!\n$usage";
 	($file1, $file2) = @ARGV;
 }
 else {
 	die "bad options!\n$usage";
-	exit 1;
 }
+
+
+
 
 ### Global values
 my %alignments;
@@ -94,8 +114,13 @@ my $count2best = 0;
 my $countequal = 0;
 my $countortho = 0;
 
+# set the subroutine to collect the Alignment Score metric
+my $get_metric1 = $low_score ? \&get_low_as_metric : \&get_high_as_metric;
 
-### Reads
+
+
+
+### Check the alignments in both files
 my $file1count = read_first_bam();
 my $file2count = read_second_bam();
 
@@ -113,38 +138,56 @@ if ($do_ortho and not $do_pick) {
 }
 
 
+
+
 ### Write out the reads
 write_bam_files($file1, 1);
 write_bam_files($file2, 2);
 
+exit;
 
+
+
+
+### Subroutines
 
 sub read_first_bam {
-	# this reads the first bam file, and stores the alignment score (AS tag) and
-	# the sum of CIGAR of operations and number of mismatches
-	# (mismatches aren't always stored in the CIGAR) for each aligned read
 	
-	my $in = Bio::DB::Bam->open($file1) or die " Cannot open input Bam file!\n";
+	my $in = open_db_connection($file1) or die " Cannot open input Bam file!\n";
 	print " Reading $file1...\n";
 	my $count = 0;
 	
 	# header
-	my $h = $in->header;
+	my $bam;
+	my $header;
+	if ($BAM_ADAPTER eq 'sam') {
+		$bam = $in->bam;
+		$header = $bam->header;
+	}
+	elsif ($BAM_ADAPTER eq 'hts') {
+		$bam = $in->hts_file;
+		$header = $bam->header_read;
+	}
+	else {
+		die "unrecognized bam adapter $BAM_ADAPTER!";
+	}
 	
 	# walk through reads
-	while (my $a = $in->read1) {
+	while (my $a = $bam->read1($header)) {
 		next if $a->unmapped;
-		$alignments{$a->qname} = sprintf "%d,%d", $a->aux_get('AS'), 
-			$a->aux_get('NM') + $a->n_cigar;
-# 		printf("   %s has quality %d CIGAR %s, %d operations, alignment score %d, and %d mismatches\n", $a->qname, $a->qual, $a->cigar_str, $a->n_cigar, $a->aux_get('AS'), $a->aux_get('NM'));
+		my $flag = $a->flag;
+		next if ($flag & 0x0100); # secondary alignment
+		next if ($flag & 0x0800); # supplementary hit
+		my $score1 = $get_metric1->($a);
+		my $score2 = get_mismatch_metric($a);
+		$alignments{$a->qname} = "$score1,$score2";
 		$count++;
-# 		exit if $count > 100;
 	}
 	return $count;
 }
 
 sub read_second_bam {
-	# this reads the second bam file, and compares the quality and cigar 
+	# this reads the second bam file, and compares the metric 
 	# number with every mapped alignment that matches from the first file
 	# alignments are assigned a single value 
 	# 1 is keep first file read
@@ -152,79 +195,96 @@ sub read_second_bam {
 	# 3 is orthologous read in both, keep or discard as requested
 	# 0 is discard (multiple hit alignment)
 	
-	my $in = Bio::DB::Bam->open($file2) or die " Cannot open input Bam file!\n";
+	my $in = open_db_connection($file2) or die " Cannot open input Bam file!\n";
 	print " Reading $file2...\n";
 	my $count = 0;
 
 	# header
-	my $h = $in->header;
+	my $bam;
+	my $header;
+	if ($BAM_ADAPTER eq 'sam') {
+		$bam = $in->bam;
+		$header = $bam->header;
+	}
+	elsif ($BAM_ADAPTER eq 'hts') {
+		$bam = $in->hts_file;
+		$header = $bam->header_read;
+	}
+	else {
+		die "unrecognized bam adapter $BAM_ADAPTER!";
+	}
 	
 	# walk through reads
-	while (my $a = $in->read1) {
+	while (my $a = $bam->read1($header)) {
 		next if $a->unmapped;
+		my $flag = $a->flag;
+		next if ($flag & 0x0100); # secondary alignment
+		next if ($flag & 0x0800); # supplementary hit
 		my $name = $a->qname;
 		$count++;
 	
 		# check for existing
 		if (exists $alignments{$name}) {
-			next if length($alignments{$name}) == 1; # a duplicate alignment!
+			next if substr($alignments{$name},0,1) eq '='; 
 				# we already processed this so move one
 		
 			# compare
-			my ($score1, $error1) = split ',', $alignments{$name};
 			if ($do_pick) {
-				my $score = $a->aux_get('AS');
-				if ($score < $score1) {
-					# second alignment is better
-					$alignments{$name} = 2;
-					$count2best++;
-				}
-				elsif ($score > $score1) {
+				my ($score1as, $score1mm) = split ',', $alignments{$name};
+				my $score2as = $get_metric1->($a);
+				if ($score1as > $score2as) {
 					# first alignment is better
-					$alignments{$name} = 1;
+					$alignments{$name} = '=1';
 					$count1best++;
 				}
-				elsif ($score == $score1) {
-					# equal alignment scores, check number of errors 
-					my $error = $a->aux_get('NM') + $a->n_cigar;
+				elsif ($score1as < $score2as) {
+					# second alignment is better
+					$alignments{$name} = '=2';
+					$count2best++;
+				}
+				elsif ($score1as == $score2as) {
+					# alignments are equal
+					# compare second score
+					my $score2mm = get_mismatch_metric($a);
 					
-					if ($error < $error1) {
-						# second alignment is better
-						$alignments{$name} = 2;
-						$count2best++;
-					}
-					elsif ($error > $error1) {
+					if ($score1mm < $score2mm) {
 						# first alignment is better
-						$alignments{$name} = 1;
+						$alignments{$name} = '=1';
 						$count1best++;
 					}
+					elsif ($score1mm > $score2mm) {
+						# second alignment is better
+						$alignments{$name} = '=2';
+						$count2best++;
+					}
 					else {
-						# alignments are equal
+						# alignments are truly equal
 						if ($do_ortho) {
 							# keep for third orthologous bam file
-							$alignments{$name} = 3;
+							$alignments{$name} = '=3';
 						}
 						else {
 							# drop the alignment
-							$alignments{$name} = 0;
+							$alignments{$name} = '=0';
 						}
 						$countequal++;
 					}
 				}
 				next;
 			}
-			if ($do_ortho) {
+			elsif ($do_ortho) {
 				# keep for third orthologous bam file
-				$alignments{$name} = 3;
+				$alignments{$name} = '=3';
 				$countortho++;
 			}
 			else {
-				$alignments{$name} = 0 if exists $alignments{$name};
+				# discard it 
+				$alignments{$name} = '=0' if exists $alignments{$name};
 			}
 		}
 		else {
 			# great, unique to the second file
-			$alignments{$name} = 2;
+			$alignments{$name} = '=2';
 		}
 	}
 	return $count;
@@ -241,15 +301,34 @@ sub write_bam_files {
 	my $cross_count = 0;
 	
 	# input file
-	my $in = Bio::DB::Bam->open($file);
+	my $in = open_db_connection($file, 1); # force to open new file handle 
+	
+	# header and bam writer
+	my $bam;
+	my $header;
+	my $write_alignment;
+	if ($BAM_ADAPTER eq 'sam') {
+		$bam = $in->bam;
+		$header = $bam->header;
+		$write_alignment = \&write_sam_alignment;
+	}
+	elsif ($BAM_ADAPTER eq 'hts') {
+		$bam = $in->hts_file;
+		$header = $bam->header_read;
+		$write_alignment = \&write_hts_alignment;
+	}
+	else {
+		die "unrecognized bam adapter $BAM_ADAPTER!";
+	}
 	
 	# output file
 	my $out_name = $file;
 	$out_name =~ s/\.bam$/.unique.bam/i;
-	my $h = $in->header;
-	my $out = Bio::DB::Bam->open($out_name, 'w') or 
-		die "unable to open file $out_name to write! $!\n";
-	$out->header_write($h);
+	my $out = Bio::ToolBox::db_helper::write_new_bam_file($out_name) or 
+		die "unable to open output bam file $out_name! $!";
+		# this uses low level Bio::DB::Bam object
+		# using an unexported subroutine imported as necessary depending on bam availability
+	$out->header_write($header);
 	print " writing $out_name....\n";
 	
 	# orthologous reads
@@ -257,30 +336,30 @@ sub write_bam_files {
 	if ($do_ortho) {
 		$out2_name = $file;
 		$out2_name =~ s/\.bam$/.orthologous.bam/i;
-		my $h = $in->header;
-		$out2 = Bio::DB::Bam->open($out2_name, 'w') or 
+		my $out = Bio::ToolBox::db_helper::write_new_bam_file($out2_name) or 
 			die "unable to open file $out2_name to write! $!\n";
-		$out2->header_write($h);
+		$out2->header_write($header);
 		print " writing $out2_name....\n";
 	}
 	
 	# walk through reads
-	while (my $a = $in->read1) {
+	my $check = "=$number";
+	while (my $a = $bam->read1($header)) {
 		my $name = $a->qname;
 		next unless exists $alignments{$name};
-		if ($alignments{$name} == $number) {
-			$out->write1($a);
+		if ($alignments{$name} eq $check) {
+			&$write_alignment($out, $a, $header);
 			delete $alignments{$name};
 			$count++;
 		}
-		elsif ($alignments{$name} == 3 and $do_ortho) {
-			$out2->write1($a);
+		elsif ($alignments{$name} eq '=3' and $do_ortho) {
+			&$write_alignment($out2, $a, $header);
 			$cross_count++;
 		}
-		elsif (length($alignments{$name}) > 1) {
+		elsif (substr($alignments{$name},0,1) ne '=') {
 			# an original first file read that never aligned to second file
-			# second file reads never look like this
-			$out->write1($a);
+			# second file reads should never look like this
+			&$write_alignment($out, $a, $header);
 			delete $alignments{$name};
 			$count++;
 		}
@@ -292,5 +371,47 @@ sub write_bam_files {
 			$do_pick ? 'equally mapped' : 'orthologous', $out2_name; 
 	}
 }
+
+sub get_low_as_metric { 
+	return -1 * ($_[0]->aux_get('AS') || 0);
+}
+
+sub get_high_as_metric { 
+	return $_[0]->aux_get('AS') || 0;
+}
+
+sub get_mismatch_metric {
+	my $nm = $_[0]->aux_get('NM') || $_[0]->aux_get('nM') || 0;
+	my $cg = $_[0]->n_cigar || 0;
+	return $nm + $cg;
+}
+
+sub write_sam_alignment {
+	# wrapper for writing Bio::DB::Sam alignments
+	# pass bam, alignment, header
+	return $_[0]->write1($_[1]);
+}
+
+sub write_hts_alignment {
+	# wrapper for writing Bio::DB::HTS alignments
+	# pass bam, alignment, header
+	return $_[0]->write1($_[2], $_[1]);
+}
+
+
+=cut
+Notes on various aligners and metrics....
+
+Novoalign 
+	mapq good, AS lower is better, NM mismatches
+STAR
+	mapq fake, AS higher is better, nM mismatches
+TopHat and bowtie2
+	mapq good, negative AS, higher is better, NM mismatches
+BWA
+	mapq good, AS higher is better, no NM tag
+bowtie1
+	don't know, same as bowtie2????
+
 
 
