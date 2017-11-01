@@ -13,7 +13,7 @@ eval {
 	require Parallel::ForkManager;
 	$parallel = 1;
 };
-my $VERSION = '1.51';
+my $VERSION = '1.53';
 
 print "\n This program will calculate observed & expected CpGs\n\n";
 
@@ -118,6 +118,12 @@ if ($infile) {
 	unless ($database) {
 		$database = $Data->database or 
 			die " no database or fasta file given! use --help for more information\n";
+	}
+	
+	# check for coordinates
+	my $type = $Data->feature_type;
+	unless ($type eq 'coordinate' or $type eq 'named') {
+		die " input file does not have recognizable coordinate or database feature identifier columns!\n";
 	}
 }
 else {
