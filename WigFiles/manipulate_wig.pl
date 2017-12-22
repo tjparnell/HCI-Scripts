@@ -283,7 +283,7 @@ sub process_bedGraph {
 		return;
 	}
 	$data[3] = process_score($data[3]);
-	die "undefined value! @data\n" if not defined $data[3];
+	return if not defined $data[3];
 	$outfh->printf("%s\t%d\t%d\t%s\n", $data[0], $data[1], $data[2], $data[3]) 
 		if (defined $data[3] and $outfh);
 	$count++;
