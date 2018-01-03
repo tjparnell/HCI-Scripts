@@ -5,11 +5,11 @@
 use strict;
 use Getopt::Long;
 use Pod::Usage;
-use Bio::ToolBox::parser::gff '1.41';
-use Bio::ToolBox::GeneTools 1.41 qw(ucsc_string);
+use Bio::ToolBox::parser::gff '1.53';
+use Bio::ToolBox::GeneTools 1.53 qw(ucsc_string filter_transcript_support_level);
 use Bio::ToolBox::utility qw(open_to_write_fh format_with_commas);
 
-my $VERSION = '1.41';
+my $VERSION = '1.53';
 
 print "\n This program will convert a GFF3 file to UCSC gene table\n";
 
@@ -29,6 +29,7 @@ unless (@ARGV) {
 my (
 	$infile,
 	$outfile,
+	$tsl,
 	$gz,
 	$verbose,
 	$help,
@@ -39,6 +40,7 @@ my (
 GetOptions( 
 	'in=s'      => \$infile, # the gff3 data file
 	'out=s'     => \$outfile, # name of output file 
+	'tsl=s'     => \$tsl, # transcript support level filter
 	'gz!'       => \$gz, # compress output
 	'verbose!'  => \$verbose, # verbose print statements
 	'help'      => \$help, # request help
@@ -137,7 +139,12 @@ sub process_gff_file_to_table {
 		die " unable to open input file '$infile'!\n";
 	
 	# Process the top features
-	my @top_features = $parser->top_features();
+	my @top_features = $parser->top_features(
+		do_gene  => 1,
+		do_exon  => 1,
+		do_cds   => 1,
+		simplify => 0,
+	);
 	printf " parsed %d top features\n", scalar @top_features;
 	while (@top_features) {
 		my $feature = shift @top_features;
@@ -150,6 +157,15 @@ sub process_gff_file_to_table {
 		}
 		elsif ($type =~ /gene|rna|transcript/i) {
 			# a recognizable gene or transcript
+			
+			# filter tsl as necessary
+			if ($tsl) {
+				my $f_gene = filter_transcript_support_level($feature, $tsl);
+				next unless $f_gene;
+				$feature = $f_gene;
+			}
+			
+			# print UCSC
 			my $string = ucsc_string($feature);
 			$counts{$type} += 1;
 			$outfh->print($string);
@@ -182,6 +198,7 @@ gff_to_ucsc_table.pl [--options...] <filename>
   Options:
   --in <filename>   [gff3 gtf]
   --out <filename> 
+  --tsl [1|2|3|4|5|NA|best|best1|best2|best3|best4|best5]
   --gz
   --verbose
   --version
@@ -201,6 +218,22 @@ Specify the input GFF3 or GTF file. The file may be compressed with gzip.
 
 Specify the output filename. By default it uses the input file base 
 name appended with '.refFlat'.
+
+=item --tsl <level>
+
+Filter transcripts on the Ensembl GTF/GFF3 attribute 'transcript_support_level', 
+which is described at L<Ensembl TSL glossary entry|http://uswest.ensembl.org/info/website/glossary.html>.
+Provide a level of support to filter. Values include: 
+    
+    1       All splice junctions supported by evidence
+    2       Transcript flagged as suspect or only support from multiple ESTs
+    3       Only support from single EST
+    4       Best supporting EST is suspect
+    5       No support
+    best    Transcripts at the best (lowest) available level are taken
+    best1   The word followed by a digit 1-5, indicating any transcript 
+            at or better (lower) than the indicated level
+    NA      Only transcripts without a level (NA) are retained.
 
 =item --gz
 
