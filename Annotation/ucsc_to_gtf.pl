@@ -15,8 +15,8 @@
 
 use strict;
 use Getopt::Long;
-use Bio::ToolBox::parser::ucsc '1.44';
-use Bio::ToolBox::GeneTools 1.44 qw(gtf_string);
+use Bio::ToolBox::parser::ucsc '1.53';
+use Bio::ToolBox::GeneTools 1.53 qw(gtf_string);
 use Bio::ToolBox::utility qw(open_to_write_fh format_with_commas);
 
 unless (scalar @ARGV) {
@@ -46,8 +46,12 @@ unless (defined $outfile) {
 }
 
 # open ucsc parser object
-my $parser = Bio::ToolBox::parser::ucsc->new($infile) or
-	die " unable to open input file '$infile'!\n";
+my $parser = Bio::ToolBox::parser::ucsc->new(
+	file    => $infile,
+	do_gene => 1,
+	do_exon => 1,
+	do_cds  => 1,
+) or die " unable to open input file '$infile'!\n";
 
 # open output file handle
 my $outfh = open_to_write_fh($outfile) or 
