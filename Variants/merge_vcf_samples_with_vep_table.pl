@@ -16,7 +16,7 @@ use Getopt::Long;
 use Bio::ToolBox::Data '1.40';
 use Bio::ToolBox::utility;
 
-my $VERSION = 1.3;
+my $VERSION = 1.4;
 
 unless (@ARGV) {
 	print <<END;
@@ -49,6 +49,7 @@ Options:
                         to take all samples present in the VCF file.
   --samples ask         Indicate that the sample columns should be interactively 
                         chosen from a list of available columns in the VCF.
+  --ref                 Include the reference allele if desired 
 END
 	exit;
 }
@@ -57,6 +58,7 @@ my $vcffile;
 my $infile;
 my $outfile;
 my $tagList = 'GT,AD';
+my $do_ref;
 my @samples;
 
 GetOptions( 
@@ -65,6 +67,7 @@ GetOptions(
 	'output=s'  => \$outfile, # output vcf
 	'tags=s'    => \$tagList, # list of attribute tags
 	'samples=s' => \@samples, # list of samples to collect from
+	'ref!'      => \$do_ref, # include the reference
 ) or die "bad options!\n";
 
 my @tags = split /,/, $tagList;
@@ -100,6 +103,7 @@ else {
 }
 my @sampleNames = map {$vcfData->name($_)} @samples;
 my %sampleInfo;
+my %sampleRef;
 $vcfData->iterate(\&store_sample_data);
 	# vep does screwy things with the start position and alternate allele 
 	# and does not take what the VCF simply provides
@@ -122,6 +126,10 @@ my @new_i; # new column indices to be used later
 foreach (@sampleNames) {
 	push @new_i, $Data->add_column($_);
 }
+my $ref_i;
+if ($do_ref) {
+	$ref_i = $Data->add_column('Reference');
+}
 
 # find columns
 my $loc_i = $Data->find_column('Location');
@@ -143,6 +151,7 @@ if ($noFind) {
 ### Finish up
 
 # reorder the columns
+push @new_i, $ref_i if $do_ref;
 $Data->reorder_column(0, @new_i, 1 .. $last);
 
 # add sample information comments
@@ -246,9 +255,11 @@ sub store_sample_data {
 	# generate id and store data under it
 	my $id = sprintf "%s_%d_%s", $chr, $start, $allele;
 	$sampleInfo{$id} = \@values; 
+	$sampleRef{$id} = $ref if $do_ref;
 	if ($allele2) {
 		$id = sprintf "%s_%d_%s", $chr, $start, $allele2;
 		$sampleInfo{$id} = \@values; 
+		$sampleRef{$id} = $ref if $do_ref;
 	}
 }
 
@@ -277,6 +288,7 @@ sub table_iterator {
 	for my $i (0 .. $#new_i) {
 		$row->value( $new_i[$i], $sampleInfo{$id}->[$i] );
 	}
+	$row->value($ref_i, $sampleRef{$id}) if $do_ref;
 }
 
 
