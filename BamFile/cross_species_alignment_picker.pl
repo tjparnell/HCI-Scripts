@@ -336,7 +336,7 @@ sub write_bam_files {
 	if ($do_ortho) {
 		$out2_name = $file;
 		$out2_name =~ s/\.bam$/.orthologous.bam/i;
-		my $out = Bio::ToolBox::db_helper::write_new_bam_file($out2_name) or 
+		$out2 = Bio::ToolBox::db_helper::write_new_bam_file($out2_name) or 
 			die "unable to open file $out2_name to write! $!\n";
 		$out2->header_write($header);
 		print " writing $out2_name....\n";
