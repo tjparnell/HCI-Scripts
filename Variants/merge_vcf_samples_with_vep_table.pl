@@ -16,7 +16,7 @@ use Getopt::Long;
 use Bio::ToolBox::Data '1.40';
 use Bio::ToolBox::utility;
 
-my $VERSION = 1.4;
+my $VERSION = 1.5;
 
 unless (@ARGV) {
 	print <<END;
@@ -174,66 +174,90 @@ print " wrote file $saved\n";
 
 sub store_sample_data {
 	my $row = shift;
+	my $asis = shift || 0;
 	
 	# check the reference and alternate alleles
+	# VEP does crazy things with naming the variant, so we have to mimic what it's doing
+	# it's detailed here https://uswest.ensembl.org/info/docs/tools/vep/vep_formats.html
 	my $ref = $row->value(3);
 	my $alt = $row->value(4);
 	if ($alt =~ /,/) {
 		# we have two alternate alleles at the same point
 		# we have to process these separately one at a time
 		my @alleles = split ',', $alt;
+		# check if all the alleles start with the same base
+		my $check = 0;
+		foreach my $a (@alleles) {
+			$check++ if substr($a,0,1) eq substr($ref,0,1) or substr($a,0,1) eq '*';
+			# asterisk means anything, so, yeah, it matches
+		}
+		my $keep = scalar(@alleles) == $check ? 0 : 1;
+			# if all alleles start with the same base, then we can transform coordinate
+			# otherwise set keep to true, which forces each iteration to keep allele as is
 		foreach my $a (@alleles) {
 			# call ourself for each allele
 			$row->value(4, $a); # set the allele to each alternate
-			store_sample_data($row);
+			store_sample_data($row, $keep);
 		}
 		return;
 	}
 	
 	# set the allele and start appropriately based on variant type
 	my $attrib = $row->attributes;
-	my ($allele, $allele2, $start);
-		# VEP bugs where 2 different alleles could be recorded, so deal with it
-	if (exists $attrib->{INFO}{SVTYPE} and 
-		$attrib->{INFO}{SVTYPE} !~ /snp/i
-	) {
-		# I think VEP defaults to using the SVTYPE INFO field?
+	my ($allele, $start);
+	if (exists $attrib->{INFO}{SVTYPE} and $attrib->{INFO}{SVTYPE} !~ /snp/i ) {
+		# VEP uses the SVTYPE INFO field for structural variants, this is used preferentially
+		# currently this doesn't handle multi-alleles and the asis variable, so this may be a bug 
 		if ($attrib->{INFO}{SVTYPE} eq 'DEL') {
 			$allele = 'deletion';
-			$allele2 = '-';
 			$start = $row->start + 1;
 		}
 		elsif ($attrib->{INFO}{SVTYPE} eq 'INS') {
 			$allele = 'insertion';
-			$allele2 = '-';
 			$start = $row->start;
 		}
 		elsif ($attrib->{INFO}{SVTYPE} =~ /^DUP/) {
 			$allele = 'duplication';
-			$allele2 = '-';
 			$start = $row->start + 1;
 		}
 		else {
 			$allele = $attrib->{INFO}{SVTYPE};
-			$allele2 = '-';
 			$start = $row->start + 1;
 		}
 	}
 	elsif (length($ref) > 1 and length($alt) > 1) {
 		# sequence alteration, probably multinucleotide that don't fit in the 
 		# other categories
-		$allele = substr($alt, 1);
-		$start = $row->start + 1;
+		if (substr($ref,0,1) eq substr($alt,0,1) and not $asis) {
+			$allele = substr($alt, 1);
+			$start = $row->start + 1;
+		}
+		else {
+			$allele = $alt;
+			$start = $row->start;
+		}
 	}
 	elsif (length($ref) < length($alt) ) {
 	 	# insertion
-		$allele = substr($alt, 1);
-		$start = $row->start;
+		if (substr($ref,0,1) eq substr($alt,0,1) and not $asis) {
+			$allele = substr($alt, 1);
+			$start = $row->start;
+		}
+		else {
+			$allele = $alt;
+			$start = $row->start;
+		}
 	}
 	elsif (length($ref) > length($alt) ) {
 	 	# deletion
-	 	$allele = '-';
-		$start = $row->start + 1;
+		if (substr($ref,0,1) eq substr($alt,0,1) and not $asis) {
+			$allele = '-';
+			$start = $row->start + 1;
+		}
+		else {
+			$allele = $asis ? $alt : '-';
+			$start = $row->start;
+		}
 	}
 	else {
 		# snv
@@ -256,11 +280,6 @@ sub store_sample_data {
 	my $id = sprintf "%s_%d_%s", $chr, $start, $allele;
 	$sampleInfo{$id} = \@values; 
 	$sampleRef{$id} = $ref if $do_ref;
-	if ($allele2) {
-		$id = sprintf "%s_%d_%s", $chr, $start, $allele2;
-		$sampleInfo{$id} = \@values; 
-		$sampleRef{$id} = $ref if $do_ref;
-	}
 }
 
 
