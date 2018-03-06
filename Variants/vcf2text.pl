@@ -36,7 +36,7 @@ die "$infile is not VCF format!\n" unless $In->vcf;
 # output file
 my $Out = Bio::ToolBox::Data->new(
 	stream => 1, 
-	columns => [qw(Chrom Pos Allele)],
+	columns => [qw(Chrom Pos ID Allele)],
 	out => $outfile,
 ) or die "unable to make output data object!\n";
 my $number = $In->number_columns - 1;
@@ -49,7 +49,7 @@ for my $i (9 .. $number) {
 # add data
 while (my $row = $In->next_row) {
 	# get chromo, pos, alt allele
-	my @data = ($row->seq_id, $row->start, $row->value(4)); 
+	my @data = ($row->seq_id, $row->start, $row->value(2), $row->value(4)); 
 	my $attrib = $row->attributes;
 	
 	# walk through samples and collect attributes
