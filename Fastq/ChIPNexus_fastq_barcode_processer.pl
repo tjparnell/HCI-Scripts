@@ -86,7 +86,7 @@ while (@ARGV) {
 		if ($sequence =~ /^( [GATC] {$randomLength} ) $fixed/x) {
 			my $random = $1 or die "nothing captured!"; # grabbed from the barcode regex
 			my ($name, $desc) = split /\s+/, $header;
-			$name .= ":$random";
+			$name .= ":UMI:$random";
 			$header = $name . ' ' . $desc;
 			$sequence = substr($sequence, $barCodeLength);
 			$quality = substr($quality, $barCodeLength);
