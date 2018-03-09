@@ -30,7 +30,7 @@ my $fixed = 'AACTGTAGGCACCATCAAT';
 my $file1;
 my $outfile;
 my $failfile;
-my $umi_length = 16;
+my $umi_length = 12;
 my $mismatch;
 
 my $help = <<END;
@@ -38,7 +38,7 @@ my $help = <<END;
 A script to strip out the Qiagen UMI from single-end reads 
 prepared from a Qiagen small RNA library. Qiagen recommends doing 
 a long read to capture the small RNA insert, read through the 
-19 bp adapter sequence, and then through the 16 bp UMI sequence. 
+19 bp adapter sequence, and then through the $umi_length bp UMI sequence. 
 
 This script will search for the adapter, optionally allowing for up to 
 2 bp mismatch, remove it, and take the remainder of the read as the UMI. 
