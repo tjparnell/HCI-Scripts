@@ -104,6 +104,9 @@ if (not $file1) {
 		die "need to provide fastq input!\n";
 	}
 }
+if (not -e $file1) {
+	die "input file $file1 does not exist!\n"
+}
 
 # prepare index callback to search for position of adapter sequence
 my $myindex;
@@ -248,6 +251,16 @@ $failfh->close if $failfile;
 $outfh->close if $outfile;
 my $goodCount = sum(values %umi2length);
 my $badCount = $notFoundCount + $nCount + $shortCount;
+my $totalCount = $goodCount + $badCount;
+if ($totalCount == 0) {
+	if ($outfile) {
+		print "nothing processed!\n";
+	}
+	else {
+		warn "nothing processed!\n";
+	}
+	exit;
+}
 
 # print stats
 if ($outfile) {
@@ -278,7 +291,7 @@ else {
 	}
 	warn " Wrote $failfile\n" if $failfile;
 }
-
+exit;
 
 
 
