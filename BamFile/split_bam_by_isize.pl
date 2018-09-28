@@ -8,19 +8,14 @@
 use strict;
 use Getopt::Long;
 use Pod::Usage;
+use Bio::ToolBox::db_helper 1.60 qw(
+	open_db_connection 
+	low_level_bam_fetch
+	$BAM_ADAPTER
+);
 use Bio::ToolBox::utility;
-my $bam_ok;
-eval {
-	# check for Bam support
-	require Bio::DB::Sam;
-	use Bio::ToolBox::db_helper::bam;
-	$bam_ok = 1;
-};
-my $VERSION = '1.42';
+my $VERSION = '1.62';
 
-# constant for memory usage while sorting
-# this increases default from 500MB to 1GB
-use constant SORT_MEM => 1_000_000_000;
 
 print "\n A script to split a paired-end bam file by insert sizes\n\n";
 
@@ -82,9 +77,6 @@ if ($print_version) {
 
 
 ### Check for required values and set defaults
-unless ($bam_ok) {
-	die "Bio::DB::Sam must be installed to run this script.\n";
-}
 # input file
 unless ($infile) {
 	if (@ARGV) {
@@ -160,22 +152,19 @@ my %buffer;
 print " Opening bam files....\n";
 
 # input file
-my $in_sam = open_bam_db($infile) 
+my $in_sam = open_db_connection($infile) 
 	or die " unable to open input bam file '$infile'!\n";
 print "   input file '$infile'\n";
 
 # input header
-my $header = $in_sam->header();
-unless ($header) {
-	die "no header in input bam file!!!\n";
+my ($header, $write_alignment);
+if ($BAM_ADAPTER eq 'sam') {
+	$header = $in_sam->bam->header;
+	$write_alignment = \&write_sam_alignment;
 }
-
-# fix the header with the sort flag, in anticipation of the output
-# files being properly sorted
-{
-	my $text = $header->text;
-	$text =~ s/SO:unsorted/SO:Coordinate/;
-	$header->text($text);
+elsif ($BAM_ADAPTER eq 'hts') {
+	$header = $in_sam->hts_file->header_read;
+	$write_alignment = \&write_hts_alignment;
 }
 
 # output files
@@ -186,12 +175,11 @@ foreach (@sizes) {
 	my $bam_file = $outfile . '.' . $_->[0] . '_' . $_->[1] . '.bam';
 	
 	# open bam file
-	my $bam = write_new_bam_file($bam_file) 
-		or die "unable to open output bam file '$outfile' for writing!\n";
-	print "   output file '$bam_file'\n";
-	
-	# write headers
+	my $bam = Bio::ToolBox::db_helper::write_new_bam_file($bam_file) or 
+		die "unable to open output bam file $bam_file! $!";
+		# using an unexported subroutine imported as necessary depending on bam availability
 	$bam->header_write($header);
+	print "   output file '$bam_file'\n";
 	
 	# store
 	$_->[2] = 0; # a count for the number of pairs written to this file
@@ -203,41 +191,25 @@ foreach (@sizes) {
 my $failed; # for storing the failed bam file object
 if ($failfile){
 	$failfile .= '.bam' unless $failfile =~ /\.bam$/;
-	$failed = write_new_bam_file($failfile) or 
+	$failed = Bio::ToolBox::db_helper::write_new_bam_file($failfile) or 
 		die "unable to open failed output bam file '$failfile' for writing!\n";
 	$failed->header_write($header);
+	print "   output file '$failfile'\n";
 }
 
 
 
 
 ### Start conversion
-print " Splitting reads... this may take a while...\n";
+print " Splitting reads...\n";
 for my $tid (0 .. $in_sam->n_targets - 1) {
-	# each chromosome is internally represented in the bam file as a numeric
-	# target identifier
-	# we can easily convert this to an actual sequence name
-	# we will force the conversion to go one chromosome at a time
-	
-	print "  splitting alignments on ", $in_sam->target_name($tid), "...\n";
+	printf "  sequence %s....\n", $in_sam->target_name($tid);
 	
 	if ($quick) {
-		$in_sam->bam_index->fetch(
-			$in_sam->bam, 
-			$tid, 
-			0, 
-			$in_sam->target_len($tid), 
-			\&quick_callback
-		);
+		low_level_bam_fetch($in_sam, $tid, 0, $in_sam->target_len($tid), \&quick_callback, 1);
 	}
 	else {
-		$in_sam->bam_index->fetch(
-			$in_sam->bam, 
-			$tid, 
-			0, 
-			$in_sam->target_len($tid), 
-			\&paired_callback
-		);
+		low_level_bam_fetch($in_sam, $tid, 0, $in_sam->target_len($tid), \&paired_callback, 1);
 	}
 	
 	# check for orphans
@@ -252,56 +224,7 @@ for my $tid (0 .. $in_sam->n_targets - 1) {
 
 
 ### Finish up 
-
-# resort and index the bam files
-foreach my $size (@sizes) {
-	
-	# undefine the bam object to close
-	pop @{$size}; 
-	
-	# sort
-	my $new_file = $size->[3];
-	$new_file =~ s/\.bam/.sorted/;
-	print " re-sorting $size->[3]...\n";
-	Bio::DB::Bam->sort_core(0, $size->[3], $new_file, SORT_MEM);
-	
-	# make new indices
-	$new_file .= '.bam'; # sorting would've automatically added the extension
-	if (-s $new_file) {
-		# remove old and rename new output file
-		unlink $size->[3]; 
-		rename($new_file, $size->[3]);
-		
-		# be nice and re-index it for them
-		Bio::DB::Bam->index_build($size->[3]);
-	}
-	else {
-		warn "  re-sorting and indexing failed! leaving as is\n";
-	}
-}
-
-# failed bam file
-if ($failfile) {
-	undef $failed; # close the bam file object
-	print " re-sorting $failfile....\n";
-	my $new_file = $failfile;
-	$new_file =~ s/\.bam/.sorted/;
-	Bio::DB::Bam->sort_core(0, $failfile, $new_file, SORT_MEM);
-	
-	# make new indices
-	$new_file .= '.bam'; # sorting would've automatically added the extension
-	if (-s $new_file) {
-		# remove old and rename new output file
-		unlink $failfile; 
-		rename($new_file, $failfile);
-		
-		# be nice and re-index it for them
-		Bio::DB::Bam->index_build($failfile);
-	}
-	else {
-		warn "  re-sorting and indexing failed! leaving as is\n";
-	}
-}
+print " Finished splitting\n Bam files need to be sorted and indexed\n\n";
 
 
 # Print summaries
@@ -367,7 +290,7 @@ sub paired_callback {
 	
 	# mapping quality
 	if ($a->qual < $min_qual) {
-		$failed->write1($a) if $failed;
+		&$write_alignment($failed, $a) if $failed;
 		$quality_count++;
 		return;
 	}
@@ -375,7 +298,7 @@ sub paired_callback {
 	# check
 	unless ($a->paired) {
 		$non_paired_count++;
-		$failed->write1($a) if $failed;
+		&$write_alignment($failed, $a) if $failed;
 		return;
 	}
 	unless ($a->proper_pair) {
@@ -401,7 +324,7 @@ sub paired_callback {
 				$same_strand_count++;
 			}
 		}
-		$failed->write1($a) if $failed;
+		&$write_alignment($failed, $a) if $failed;
 		return;
 	}
 	
@@ -418,15 +341,15 @@ sub paired_callback {
 				my $dna2 = $a->qseq || 'N';
 				unless ($dna1 =~ /^[AaTt]/ and $dna2 =~ /^[AaTt]/) {
 					$non_AT_end_count++;
-					$failed->write1($a) if $failed;
-					$failed->write1($buffer{$a->qname}) if $failed;
+					&$write_alignment($failed, $a) if $failed;
+					&$write_alignment($failed, $buffer{$a->qname}) if $failed;
 					delete $buffer{ $a->qname };
 					return;
 				}
 			}
 			
 			# write the alignments
-			write_alignments( $buffer{ $a->qname }, $a);
+			write_out_alignments( $buffer{ $a->qname }, $a);
 			delete $buffer{ $a->qname };
 		}
 		else {
@@ -436,7 +359,7 @@ sub paired_callback {
 			if ($a->isize >= $lowest and $a->isize <= $highest) {
 				# the right size but no left mate, that is odd
 				$no_left_mate_count++;
-				$failed->write1($a) if $failed;
+				&$write_alignment($failed, $a) if $failed;
 			}
 		}
 		return;
@@ -450,12 +373,12 @@ sub paired_callback {
 	my $size = $a->isize;
 	if ($size < $lowest) {
 		$toosmall_count++;
-		$failed->write1($a) if $failed;
+		&$write_alignment($failed, $a) if $failed;
 		return;
 	}
 	elsif ($size > $highest) {
 		$toobig_count++;
-		$failed->write1($a) if $failed;
+		&$write_alignment($failed, $a) if $failed;
 		return;
 	}
 	else {
@@ -472,7 +395,7 @@ sub quick_callback {
 	
 	# mapping quality
 	if ($a->qual < $min_qual) {
-		$failed->write1($a) if $failed;
+		&$write_alignment($failed, $a) if $failed;
 		$quality_count++;
 		return;
 	}
@@ -480,7 +403,7 @@ sub quick_callback {
 	# check
 	unless ($a->paired) {
 		$non_paired_count++;
-		$failed->write1($a) if $failed;
+		&$write_alignment($failed, $a) if $failed;
 		return;
 	}
 	unless ($a->proper_pair) {
@@ -507,7 +430,7 @@ sub quick_callback {
 				$same_strand_count++;
 			}
 		}
-		$failed->write1($a) if $failed;
+		&$write_alignment($failed, $a) if $failed;
 		return;
 	}
 	$pair_count++ unless ($a->reversed); # count only left reads as pair
@@ -516,12 +439,12 @@ sub quick_callback {
 	my $size = $a->isize;
 	if ($size < $lowest) {
 		$toosmall_count++;
-		$failed->write1($a) if $failed;
+		&$write_alignment($failed, $a) if $failed;
 		return;
 	}
 	elsif ($size > $highest) {
 		$toobig_count++;
-		$failed->write1($a) if $failed;
+		&$write_alignment($failed, $a) if $failed;
 		return;
 	}
 	else {
@@ -533,18 +456,18 @@ sub quick_callback {
 			my $dna = $a->qseq || 'N';
 			unless ($dna =~ /^[AaTt]/) {
 				$non_AT_end_count++;
-				$failed->write1($a) if $failed;
+				&$write_alignment($failed, $a) if $failed;
 				return;
 			}
 		}
 		
 		# write
-		write_alignments($a);
+		write_out_alignments($a);
 	}
 }
 
 
-sub write_alignments {
+sub write_out_alignments {
 	my ($a1, $a2) = @_;
 	my $length = $a1->isize;
 	
@@ -555,11 +478,21 @@ sub write_alignments {
 			$length >= $size->[0] and
 			$length <= $size->[1]
 		) {
-			$size->[4]->write1($a1);
-			$size->[4]->write1($a2) if defined $a2;
+			&$write_alignment($size->[4], $a1);
+			&$write_alignment($size->[4], $a2) if defined $a2;
 			$size->[2] += 1 unless ($a1->reversed); # count the left ones only
 		}
 	}
+}
+
+sub write_sam_alignment {
+	# wrapper for writing Bio::DB::Sam alignments
+	return $_[0]->write1($_[1]);
+}
+
+sub write_hts_alignment {
+	# wrapper for writing Bio::DB::HTS alignments
+	return $_[0]->write1($header, $_[1]);
 }
 
 
