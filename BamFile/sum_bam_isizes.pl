@@ -3,37 +3,26 @@
 # a script to count paired-end insert sizes
 
 use strict;
-
+use List::Util qw(min max sum0);
 use Bio::ToolBox::Data;
-use Bio::ToolBox::db_helper::bam;
+use Bio::ToolBox::db_helper 1.60 qw(
+	open_db_connection 
+	low_level_bam_fetch
+);
+use Bio::ToolBox::utility;
 
-
-# variables
-# these could be obtained from a commandline if I had the wherewithall
-
-my $min = 1;
-my $max = 500;
 
 unless (@ARGV) {
-	die " $0 <outfile> <bamfile1> <bamfile2>....\n";
+	print " $0 <outfile> <bamfile1> \n";
+	exit;
 }
 
 my $outfile = shift @ARGV;
-my @files = @ARGV;
+my $file = shift @ARGV;
 
-# make output structure
-my $Data = Bio::ToolBox::Data->new(
-	feature => 'alignment_summary', 
-	columns => ['size', @files],
-) or die "unable to generate Data structure!";
-my %size2count;
-
-# fill up Data structures with sizes
-for (my $size = $min; $size <= $max; $size++) {
-	my $r = $Data->add_row;
-	$Data->value($r, 0, $size);
-	$size2count{$size} = 0;
-}
+# count hashes
+my %Fsize2count;
+my %Rsize2count;
 
 # processing callback
 my $callback = sub {
@@ -43,52 +32,57 @@ my $callback = sub {
 	return if $a->unmapped;
 	return unless $a->proper_pair;
 	
-	# we only need to process one of the two pairs, 
-	# so only take the left (forward strand) read
-	return unless $a->strand == 1;
-	
 	# record the insert size
 	my $isize = $a->isize;
-	$size2count{$isize} += 1;
+	if ($a->reversed) {
+		$Rsize2count{$isize} += 1;
+	}
+	else {
+		$Fsize2count{$isize} += 1;
+	}
 };
 
-# collect Data from files
-my $index = 1;
-foreach my $file (@files) {
-	print "counting $file...\n";
-	my $sam = open_bam_db($file) or
-		die "can't open bam file $file\n";
+
+print "counting $file...\n";
+my $sam = open_db_connection($file) or
+	die "can't open bam file $file\n";
+
+# Loop through the chromosomes
+for my $tid (0 .. $sam->n_targets - 1) {
+	low_level_bam_fetch($sam, $tid, 0, $sam->target_len($tid), $callback, 1);
+}
 	
-	# Loop through the chromosomes
-	for my $tid (0 .. $sam->n_targets - 1) {
-		
-		# sequence name
-		my $seq_id = $sam->target_name($tid);
-		
-		# process the reads
-		$sam->fetch($seq_id, $callback);
-	}
-	
-	# now record the size counts 
-	$Data->iterate( sub {
-		my $row = shift;
-		my $size = $row->value(0);
-		$row->value($index, $size2count{$size});
-		# erase the count for next
-		$size2count{$size} = 0;
-	} );
-	
-	# prepare for next file
-	$index++;
+# now record the size counts 
+my $minsize = min(keys(%Fsize2count), keys(%Rsize2count));
+my $maxsize = max(keys(%Fsize2count), keys(%Rsize2count));
+my $Data = Bio::ToolBox::Data->new(
+	feature => 'alignment_summary', 
+	columns => ['size', 'F_isize', 'R_isize'],
+) or die "unable to generate Data structure!";
+for my $size ($minsize .. $maxsize) {
+	my $f = $Fsize2count{$size} || 0;
+	my $r = $Rsize2count{$size} || 0;
+	next if ($f == 0 and $r == 0); # skip empties
+	$Data->add_row([$size, $f, $r]);
 }
 
+# Finish
 my $success_write = $Data->save(
 	'filename' => $outfile,
 );
 if ($success_write) {
-	print "wrote $success_write!";
+	print "wrote $success_write!\n";
 }
 
+# print summary
+printf "%12s Forward alignments had a positive insert size\n",
+    format_with_commas(sum0( map {$Fsize2count{$_}} grep {$_ > 0} keys %Fsize2count));
+printf "%12s Forward alignments had a negative insert size\n",
+    format_with_commas(sum0( map {$Fsize2count{$_}} grep {$_ < 0} keys %Fsize2count));
+printf "%12s Reverse alignments had a positive insert size\n",
+    format_with_commas(sum0( map {$Rsize2count{$_}} grep {$_ > 0} keys %Rsize2count));
+printf "%12s Reverse alignments had a negative insert size\n",
+    format_with_commas(sum0( map {$Rsize2count{$_}} grep {$_ < 0} keys %Rsize2count));
 
 
 
