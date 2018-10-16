@@ -14,6 +14,7 @@
 
 use strict;
 use Getopt::Long qw(:config no_ignore_case);
+use List::Util qw(sum);
 use Bio::ToolBox::Data;
 use Bio::ToolBox::GeneTools 1.63 qw(
 	:export
@@ -60,7 +61,10 @@ GetOptions(
 	'o|out=s'     => \$outfile, # output file
 ) or die " unrecognized options!\n";
 
-
+# minimum length 
+my $min_length = ($start || 0) + ($stop || 0) + 3; # make it a little longer than requested
+die " trim values add up to zero!!??\n" if $min_length == 0;
+print " minimum length of CDS must be $min_length bp\n";
 
 
 #### Input file
@@ -146,6 +150,11 @@ sub adjust_forward_transcripts {
 	
 	# get CDS
 	my @cds = get_cds($transcript);
+	my $cds_length = sum( map {$_->length} @cds );
+	if ($cds_length <= $min_length) {
+		printf " transcript %s CDS is $cds_length bp and too short to trim\n", $transcript->primary_id;
+		return;
+	}
 	
 	## First CDS
 	# make sure first CDS is long enough
@@ -157,10 +166,9 @@ sub adjust_forward_transcripts {
 	else {
 		my $remainder = $start - $cds[0]->length;
 		$transcript->delete_SeqFeature( $cds[0]->primary_id );
-		shift @cds; # remove this CDS from our existing array
 		# adjust second, now first, CDS
-		my $s = $cds[0]->start + $remainder;
-		$cds[0]->start($s);
+		my $s = $cds[1]->start + $remainder;
+		$cds[1]->start($s);
 	}
 	
 	## Last CDS
@@ -173,10 +181,9 @@ sub adjust_forward_transcripts {
 	else {
 		my $remainder = $stop - $cds[-1]->length;
 		$transcript->delete_SeqFeature( $cds[-1]->primary_id );
-		pop @cds; # simply remove this CDS
 		# adjust second, now first, to last CDS
-		my $s = $cds[-1]->end - $remainder;
-		$cds[-1]->start($s);
+		my $s = $cds[-2]->end - $remainder;
+		$cds[-2]->start($s);
 	}
 }
 
@@ -186,6 +193,11 @@ sub adjust_reverse_transcripts {
 	
 	# get CDS
 	my @cds = get_cds($transcript);
+	my $cds_length = sum( map {$_->length} @cds );
+	if ($cds_length <= $min_length) {
+		printf " transcript %s CDS is $cds_length bp and too short to trim\n", $transcript->primary_id;
+		return;
+	}
 	
 	## First CDS
 	# make sure first CDS is long enough
@@ -197,10 +209,9 @@ sub adjust_reverse_transcripts {
 	else {
 		my $remainder = $start - $cds[-1]->length;
 		$transcript->delete_SeqFeature( $cds[-1]->primary_id );
-		pop @cds; # simply remove this CDS
 		# adjust second, now first, CDS
-		my $s = $cds[-1]->end - $remainder;
-		$cds[-1]->end($s);
+		my $s = $cds[-2]->end - $remainder;
+		$cds[-2]->end($s);
 	}
 	
 	## Last CDS
@@ -213,10 +224,9 @@ sub adjust_reverse_transcripts {
 	else {
 		my $remainder = $stop - $cds[0]->length;
 		$transcript->delete_SeqFeature( $cds[0]->primary_id );
-		shift @cds; # simply remove this CDS
 		# adjust second, now first, to last CDS
-		my $s = $cds[0]->start + $remainder;
-		$cds[0]->start($s);
+		my $s = $cds[1]->start + $remainder;
+		$cds[1]->start($s);
 	}
 }
 
