@@ -12,7 +12,7 @@ unless (@ARGV) {
  A simple script to split a gzip-compressed fastq file into subparts.
  Typically used to make aligning monster fastq files easier by splitting
  into independent parallel jobs. 
- This script requires external gzip utility to be in the path.
+ This script requires external gzip and pigz utilities to be in the path.
  Output files named as 0001_file1, 0002_file1, etc. Path and extension 
  are preserved.
  
@@ -66,8 +66,9 @@ foreach my $file (@ARGV) {
 
 sub open_output {
 	my ($path, $basename, $extension, $part) = @_;
-	my $filename = $path . $part . '_' . $basename . $extension;
-	my $fh = IO::File->new("| gzip >$filename") or 
+	my $filename = sprintf("%s%d_%s%s", $path, $part, $basename, $extension);
+	my $fh = IO::File->new("| pigz -p 4 >$filename") or 
 		die "cannot write to compressed file '$filename' $!\n";
+	print " > writing $filename\n";
 	return $fh;
 }
