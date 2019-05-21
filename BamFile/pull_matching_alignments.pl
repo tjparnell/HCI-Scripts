@@ -1,9 +1,8 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 
 use strict;
-use IO::File;
-use Bio::DB::Sam;
-
+use Bio::ToolBox 1.65;
+use Bio::ToolBox::db_helper;
 
 unless (@ARGV) {
 	print <<USAGE;
@@ -33,10 +32,12 @@ unless ($outfile) {
 	$outfile =~ s/\.bam$/_matched.bam/i;
 }
 
+
 # load up list file
 my %lookup;
 my $duplicates = 0;
-my $fh = IO::File->new($namefile);
+my $fh = Bio::ToolBox->open_file($namefile) or 
+	die "unable to open file! $!\n";
 while (my $line = $fh->getline) {
 	chomp $line;
 	if (exists $lookup{$line}) {
@@ -50,21 +51,42 @@ $fh->close;
 print " Warning: there were $duplicates duplicate query names in the list file!\n" if $duplicates;
 printf "Loaded %s query names\n", scalar keys %lookup;
 
-# open bam files
-my $in = Bio::DB::Bam->open($infile) or die " Cannot open input Bam file!\n";
-my $out = Bio::DB::Bam->open($outfile, 'w') or 
-	die "cannot open output bam file '$outfile'!\n";
+# open input bam file
+my $sam = Bio::ToolBox->open_database($infile) or 
+	die " Cannot open input Bam file!\n";
 
-# write header
-$out->header_write( $in->header );
+# read header and set adapter specific alignment writer
+# also get low level bam adapter
+my ($lowbam, $header, $write_alignment);
+if (Bio::ToolBox->bam_adapter eq 'sam') {
+	$lowbam = $sam->bam;
+	$header = $lowbam->header;
+	$write_alignment = \&write_sam_alignment;
+}
+elsif (Bio::ToolBox->bam_adapter eq 'hts') {
+	$lowbam = $sam->hts_file;
+	$header = $lowbam->header_read;
+	$write_alignment = \&write_hts_alignment;
+}
+else {
+	die "unrecognized bam adapter!"; # shouldn't happen
+}
+
+# open output bam file
+my $out = Bio::ToolBox::db_helper::write_new_bam_file($outfile) or 
+	die "cannot open output bam file '$outfile'!\n";
+$out->header_write($header);
+
+
+
 
 # look for alignments
 my $matched = 0;
-while (my $a = $in->read1) {
+while (my $a = $lowbam->read1($header)) {
 	if (exists $lookup{ $a->qname }) {
 		$matched++;
 		$lookup{ $a->qname }++;
-		$out->write1($a);
+		&$write_alignment($a);
 	}
 }
 
@@ -79,5 +101,15 @@ print "Matched $matched alignments\n";
 print "Wrote output file $outfile\n";
 exit 0;
 
+
+sub write_sam_alignment {
+	# wrapper for writing Bio::DB::Sam alignments
+	return $out->write1($_[0]);
+}
+
+sub write_hts_alignment {
+	# wrapper for writing Bio::DB::HTS alignments
+	return $out->write1($header, $_[0]);
+}
 
 
