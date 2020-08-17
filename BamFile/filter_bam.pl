@@ -6,13 +6,11 @@ use strict;
 use Getopt::Long;
 use Pod::Usage;
 use Bio::ToolBox::utility;
-my $bam_ok;
-eval {
-	# check for Bam support
-	require Bio::DB::Sam;
-	$bam_ok = 1;
-};
-my $VERSION = '1.20';
+use Bio::ToolBox::db_helper 1.60 qw(
+	open_db_connection 
+	$BAM_ADAPTER
+);
+my $VERSION = 1.60;
 
 print "\n A script to filter a Bam file for specific criteria\n\n";
 
@@ -42,7 +40,6 @@ my (
 	$do_mate_seqid,
 	$do_score,
 	$do_length,
-	$do_index,
 	$help,
 	$print_version,
 );
@@ -64,7 +61,7 @@ GetOptions(
 	'length=s'   => \$do_length, # check length
 	'seq=s'      => \@sequences, # check specific sequence
 	'attrib=s'   => \@attributes, # check attributes
-	'index!'     => \$do_index, # re-index the output files
+	'bam=s'      => \$BAM_ADAPTER, # force a specific bam adapter, advanced
 	'help'       => \$help, # request help
 	'version'    => \$print_version, # print the version
 ) or die " unrecognized option(s)!! please refer to the help documentation\n\n";
@@ -87,9 +84,6 @@ if ($print_version) {
 
 
 ### Check for required values and set defaults
-unless ($bam_ok) {
-	die "Module Bio::DB::Sam must be installed to run this script.\n";
-}
 my ($true_file, $false_file);
 my @lengths;
 my @filters;
@@ -99,14 +93,12 @@ my $start_time = time;
 
 
 ### Open the Bam files
-my ($in_bam, $true_bam, $false_bam) = open_bam_files();
+my ($in_bam, $header, $writer, $true_bam, $false_bam) = open_bam_files();
 
 
 
 ### Filter the Bam file
 filter_bam();
-
-finish_bam_files() if $do_index;
 
 printf " Finished in %.1f in minutes\n", (time - $start_time) / 60;
 
@@ -197,31 +189,59 @@ sub check_defaults {
 
 sub open_bam_files {
 	
-	# input bam file
-	my $in = Bio::DB::Bam->open($infile) or die " Cannot open input Bam file!\n";
-	my $header = $in->header; # must always get before reading alignments
+	# input bam file, open as a high level object, adapter agnostic
+	my $in = open_db_connection($infile) or 
+		die " Cannot open input Bam file!\n";
+	
+	# we need the low level bam object and header, dependent on the adapter used
+	# also set the function for writing the alignments
+	my ($header, $write_alignment, $bam);
+	if ($BAM_ADAPTER eq 'sam') {
+		$bam = $in->bam;
+		$header = $bam->header;
+		$write_alignment = \&write_sam_alignment;
+	}
+	elsif ($BAM_ADAPTER eq 'hts') {
+		$bam = $in->hts_file;
+		$header = $bam->header_read;
+		$write_alignment = \&write_hts_alignment;
+	}
+	else {
+		die "unrecognized bam adapter $BAM_ADAPTER!";
+	}
 
-	# output bam files
+	# open output files
+	# using an unexported subroutine depending on bam availability
 	my ($true, $false);
 	if ($write_true) {
-		$true = Bio::DB::Bam->open($true_file, 'w') or 
+		$true = Bio::ToolBox::db_helper::write_new_bam_file($true_file) or 
 			die "Cannot open output file $true_file!\n";
-		$true->header_write( $header );
+		$true->header_write($header);
 	}
 	if ($write_false) {
-		$false = Bio::DB::Bam->open($false_file, 'w') or 
+		$false = Bio::ToolBox::db_helper::write_new_bam_file($false_file) or 
 			die "Cannot open output file $false_file!\n";
-		$false->header_write( $header );
+		$false->header_write($header);
 	}
-	return ($in, $true, $false);
+	return ($bam, $header, $write_alignment, $true, $false);
 }
 
 sub filter_bam {
 	my @counts = (0,0,0); # total, true, false counts
 	
 	# walk through each alignment in the bam file
-	while (my $a = $in_bam->read1) {
-		callback($a, \@counts);
+	# again, this is dependent on the adapter being used
+	if ($BAM_ADAPTER eq 'sam') {
+		# Bio::DB::Sam
+		while (my $a = $in_bam->read1) {
+			callback($a, \@counts);
+		}
+	}
+	else {
+		# Bio::DB::HTS
+		while (my $a = $in_bam->read1($header)) {
+			callback($a, \@counts);
+		}
 	}
 	
 	
@@ -252,24 +272,11 @@ sub callback {
 	$counts->[0]++; # total count
 	if ($check) {
 		$counts->[1]++;
-		$true_bam->write1($a) if ($true_file);
+		&$writer($true_bam, $a) if ($true_file);
 	}
 	else {
 		$counts->[2]++;
-		$false_bam->write1($a) if ($false_file);
-	}
-}
-
-sub finish_bam_files {
-	# close the output bam files and index them
-	# they will be sorted as necessary
-	if ($write_true) {
-		undef $true_bam;
-		Bio::DB::Bam->reindex($true_file);
-	}
-	if ($write_false) {
-		undef $false_bam;
-		Bio::DB::Bam->reindex($false_file);
+		&$writer($false_bam, $a) if ($false_file);
 	}
 }
 
@@ -397,6 +404,17 @@ sub filter_for_attribute {
 	return $check;
 }
 
+sub write_sam_alignment {
+	# wrapper for writing Bio::DB::Sam alignments
+	return $_[0]->write1($_[1]);
+}
+
+sub write_hts_alignment {
+	# wrapper for writing Bio::DB::HTS alignments
+	return $_[0]->write1($header, $_[1]);
+}
+
+
 
 
 __END__
@@ -427,7 +445,6 @@ filter_bam.pl <file.bam>
   --length <integer>
   --seq <pos:[ATCG]>
   --attrib <key:value>
-  --index
   --version
   --help
 
@@ -549,12 +566,6 @@ attributes. Two or more key values are combined in a logical OR
 operation. Two or more attribute keys may be tested by specifying 
 multiple --attrib command line options; in this case, they are  
 combined in a logical AND operation.
-
-=item --index
-
-Optionally re-index the output bam file(s) when finished. If 
-necessary, the bam file is sorted by coordinate first. Default is 
-false.
 
 =item --version
 
