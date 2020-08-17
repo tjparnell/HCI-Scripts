@@ -26,10 +26,12 @@ VEP output annotation table. VEP does not preserve sample information.
 This script remedies this problem. Only specific sample tags are 
 included, on the assumption that not all are required.
 
-If no sample columns are present in the VCF file, then the tags are 
-taken from the INFO column instead.
+The sample information is put in behind the first ID column. For sample 
+tags, one column per sample is included. Multiple tags are separated by 
+a colon delimiter (same as the VCF).
 
-The sample information is put in behind the first ID column.
+INFO, Filter, and QUAL variant information is recorded as separate 
+columns.
 
 Usage: $0 --vcf <input.vcf> --in <input.annot.txt>
 Options: 
@@ -41,16 +43,17 @@ Options:
   --tags <GT,AD>        Provide a comma delimited list of attribute tags 
                         from the sample column to include in the output.
                         If not defined, then the default is GT:AD.
+  --info <tags>         Provide a comma delimited list of INFO tags
   --samples <index>     Provide the 0-based index(es) of the sample columns 
                         from which to collect the tag information. Provide 
                         a comma-delimited list, range, or specify the option 
-                        multiple times. The INFO field is column 7, and 
-                        sample columns begin at column 9. The default is 
-                        to take all samples present in the VCF file.
+                        multiple times. The sample columns begin at column 9. 
+                        The default is to take all samples present in the file.
   --samples ask         Indicate that the sample columns should be interactively 
                         chosen from a list of available columns in the VCF.
   --ref                 Include the reference allele if desired 
   --filter              Include the Filter column if desired
+  --score               Include the variant QUAL score if desired
 END
 	exit;
 }
@@ -59,8 +62,10 @@ my $vcffile;
 my $infile;
 my $outfile;
 my $tagList = 'GT,AD';
+my $infoList;
 my $do_ref;
 my $do_filter;
+my $do_score;
 my @samples;
 
 GetOptions( 
@@ -68,13 +73,15 @@ GetOptions(
 	'vcf=s'     => \$vcffile, # input vcf
 	'output=s'  => \$outfile, # output vcf
 	'tags=s'    => \$tagList, # list of attribute tags
+	'info=s'    => \$infoList, # list of INFO tags
 	'samples=s' => \@samples, # list of samples to collect from
 	'ref!'      => \$do_ref, # include the reference
 	'filter!'   => \$do_filter, # include the filter
+	'score!'    => \$do_score, # include the quality score
 ) or die "bad options!\n";
 
-my @tags = split /,/, $tagList;
-
+my @sample_tags = split /,/, $tagList;
+my @info_tags = split /,/, $infoList;
 
 ### Load sample information
 print " Loading sample information from $vcffile...\n";
@@ -99,15 +106,24 @@ else {
 	if ($vcfData->last_column >= 9) {
 		@samples = (9 .. $vcfData->last_column);
 	}
-	else {
-		print " no samples found in vcf file! Using INFO field instead\n";
-		push @samples, 7;
+	elsif (scalar(@info_tags) == 0) {
+		print " no samples found in vcf file and no INFO tags specified\n nothing to do\n";
+		exit;
 	}
 }
 my @sampleNames = map {$vcfData->name($_)} @samples;
 my %sampleInfo;
-my %sampleRef;
-my %sampleFilter;
+my %varInfo;
+
+if (@sample_tags) {
+	printf " Collecting Sample tags %s from %s\n", join(", ", @sample_tags), 
+		join(", ", @sampleNames);
+}
+if (@info_tags) {
+	printf " Collecting INFO tags %s\n", join(", ", @info_tags);
+}
+
+
 $vcfData->iterate(\&store_sample_data);
 	# vep does screwy things with the start position and alternate allele 
 	# and does not take what the VCF simply provides
@@ -126,9 +142,9 @@ my $Data = Bio::ToolBox::Data->new(file => $infile) or
 
 # add new columns
 my $last = $Data->last_column;
-my @new_i; # new column indices to be used later
+my @new_tag_i; # new column indices to be used later
 foreach (@sampleNames) {
-	push @new_i, $Data->add_column($_);
+	push @new_tag_i, $Data->add_column($_);
 }
 my $ref_i;
 if ($do_ref) {
@@ -138,6 +154,15 @@ my $filter_i;
 if ($do_filter) {
 	$filter_i = $Data->add_column('Filter');
 }
+my $score_i;
+if ($do_score) {
+	$score_i = $Data->add_column('Quality');
+}
+my @new_info_i;
+foreach (@info_tags) {
+	push @new_info_i, $Data->add_column($_);
+}
+
 
 # find columns
 my $loc_i = $Data->find_column('Location');
@@ -159,12 +184,14 @@ if ($noFind) {
 ### Finish up
 
 # reorder the columns
-push @new_i, $ref_i if $do_ref;
-push @new_i, $filter_i if $do_filter;
-$Data->reorder_column(0, @new_i, 1 .. $last);
+push @new_tag_i, $ref_i if $do_ref;
+push @new_tag_i, $filter_i if $do_filter;
+push @new_tag_i, $score_i if $do_score;
+push @new_tag_i, @new_info_i if scalar(@new_info_i);
+$Data->reorder_column(0, @new_tag_i, 1 .. $last);
 
 # add sample information comments
-$Data->add_comment(sprintf "Sample Information tags = %s", join(':', @tags));
+$Data->add_comment(sprintf "Sample Information tags = %s", join(':', @sample_tags));
 
 # save the file
 my $saved;
@@ -279,17 +306,27 @@ sub store_sample_data {
 	my $chr = $row->seq_id;
 	$chr =~ s/^chr//; # Ensembl doesn't like chr prefix
 	
+	# generate id
+	my $id = sprintf "%s_%d_%s", $chr, $start, $allele;
+	
 	# collect the sample attribute tags
 	my @values;
 	foreach my $i (@samples) {
-		push @values, join(':', map { $attrib->{$i}{$_} || '.' } @tags);
+		push @values, join(':', map { $attrib->{$i}{$_} || '.' } @sample_tags);
+	}
+	$sampleInfo{$id} = \@values; 
+	
+	# collect variant info
+	if (@info_tags or $do_ref or $do_filter or $do_score) {
+		$varInfo{$id} ||= {};
+		foreach (@info_tags) {
+			$varInfo{$id}{$_} = $attrib->{7}{$_} || '.';
+		}
+		$varInfo{$id}{REF} = $ref if $do_ref;
+		$varInfo{$id}{FILTER} = $row->value(6) if $do_filter;
+		$varInfo{$id}{SCORE} = $row->value(5) if $do_score;
 	}
 	
-	# generate id and store data under it
-	my $id = sprintf "%s_%d_%s", $chr, $start, $allele;
-	$sampleInfo{$id} = \@values; 
-	$sampleRef{$id} = $ref if $do_ref;
-	$sampleFilter{$id} = $row->value(6) if $do_filter;
 }
 
 
@@ -307,18 +344,23 @@ sub table_iterator {
 	unless (exists $sampleInfo{$id}) {
 		# this is a problem, not in the original vcf file!?
 		# more likely programmatic error due to complex alleles
-		foreach (@new_i) {$row->value($_, '-')}
+		foreach (@new_tag_i) {$row->value($_, '-')}
 		printf "cannot find id $id for %s %s\n", $row->value($loc_i), $row->value($alt_i);
 		$noFind++;
 		next;
 	}
 	
 	# store the information
-	for my $i (0 .. $#new_i) {
-		$row->value( $new_i[$i], $sampleInfo{$id}->[$i] );
+	for my $i (0 .. $#new_tag_i) {
+		$row->value( $new_tag_i[$i], $sampleInfo{$id}->[$i] );
 	}
-	$row->value($ref_i, $sampleRef{$id}) if $do_ref;
-	$row->value($filter_i, $sampleFilter{$id}) if $do_filter;
+	for my $i (0 .. $#new_info_i) {
+		$row->value( $new_info_i[$i], $varInfo{$id}{ $info_tags[$i] } );
+	}
+	$row->value($ref_i, $varInfo{$id}{REF}) if $do_ref;
+	$row->value($filter_i, $varInfo{$id}{FILTER}) if $do_filter;
+	$row->value($score_i, $varInfo{$id}{SCORE}) if $do_score;
+	
 }
 
 
