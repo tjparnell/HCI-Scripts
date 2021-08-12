@@ -16,7 +16,7 @@ use Getopt::Long;
 use Bio::ToolBox::Data '1.40';
 use Bio::ToolBox::utility;
 
-my $VERSION = 1.6;
+my $VERSION = 1.7;
 
 unless (@ARGV) {
 	print <<END;
