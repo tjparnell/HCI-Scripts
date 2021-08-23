@@ -14,7 +14,7 @@
 use strict;
 use Getopt::Long;
 use Bio::ToolBox::Data '1.41';
-my $VERSION = 1.2;
+my $VERSION = 1.3;
 
 unless (scalar @ARGV >= 2) {
 	print <<END;
@@ -122,18 +122,21 @@ sub process_table {
 			if ($c =~ /^##sequence\-region\s+([\w\.]+)\s/) {
 				# gff3 sequence pragmas
 				my $chr = $1;
-				$chr =~ s/\.\d$//;
-				if (exists $lookup->{lc $chr}) {
-					my $alt = $lookup->{lc $chr};
+				my $chr2 = $chr;
+				$chr2 =~ s/\.\d$//;
+				$chr2 =~ s/\.\d$//;
+				if (exists $lookup->{lc $chr2}) {
+					my $alt = $lookup->{lc $chr2};
 					$c =~ s/$chr/$alt/;
 				}
 			}
 			elsif ($c =~ /^##contig=<ID=([\w\.]+)/) {
 				# vcf sequence identifiers
 				my $chr = $1;
-				$chr =~ s/\.\d$//;
-				if (exists $lookup->{lc $chr}) {
-					my $alt = $lookup->{lc $chr};
+				my $chr2 = $chr;
+				$chr2 =~ s/\.\d$//;
+				if (exists $lookup->{lc $chr2}) {
+					my $alt = $lookup->{lc $chr2};
 					$c =~ s/$chr/$alt/;
 				}
 			}
