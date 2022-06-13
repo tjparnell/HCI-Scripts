@@ -11,7 +11,7 @@
 # it under the terms of the Artistic License 2.0.  
 # 
 # Updated versions of this file may be found in the repository
-# https://github.com/tjparnell/HCI-Scripts/
+# https://github.com/tjparnell/HCI-Scripts
 
 
 use strict;
@@ -19,10 +19,19 @@ use Bio::ToolBox::Data;
 # must also have Bio::DB::USeq version 0.24 installed
 
 unless (@ARGV) {
-	print " Extract BisMark-like coverage file from ConvertedC and NonConvertedC USeq files\n";
-	print " Be sure to first filter point data for CpG context using the ParsePointDataContexts\n";
-	print " It will write a .bismark.cov and .bedGraph file\n\n";
-	print " Usage: bismark_methylation_extractor.pl <ConvertedCpG.useq> <NonConvertedCpG.useq> <out>\n\n";
+print <<END;
+  
+  Extract BisMark-like coverage file from ConvertedC and NonConvertedC USeq files
+  from USeq NovoalignBisulfiteParser output files.
+  
+  Be sure to first filter point data for CpG context using the ParsePointDataContexts.
+  It will silently skip mitochondrial and Lambda chromosomes.
+  
+  It will write .bismark.cov and .bedGraph files.
+  
+  Usage: bismark_methylation_extractor.pl <ConvertedCpG.useq> <NonConvertedCpG.useq> <out>
+
+END
 	exit;
 }
 
