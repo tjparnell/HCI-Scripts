@@ -47,7 +47,14 @@ my $outfh2 = Bio::ToolBox::Data->open_to_write_fh($outfile . '.bedGraph') or
 	die "cannot open file $outfile! $!\n";
 
 foreach my $chr ($c_db->seq_ids) {
-	print " processing $chr\n";
+	
+	# skip unwanted chromosomes
+	if ($chr =~ /(?:chrM|MT|Mito|Lambda|PhiX)/i) {
+		print " skipping $chr\n";
+	}
+	else {
+		print " processing $chr\n";
+	}
 	
 	# each position will be an array of [c, nonc]
 	my %pos2score;
@@ -131,11 +138,21 @@ foreach my $chr ($c_db->seq_ids) {
 	### write out
 	foreach my $pos (sort {$a <=> $b} keys %pos2score) {
 		my ($c, $nc) = @{ $pos2score{$pos} };
-		my $frac = ($nc / ($c + $nc)) * 100;
-		# coverage file
-		$outfh1->printf("$chr\t$pos\t$pos\t%.0f\t%d\t%d\n", $frac, $nc, $c);
-		# bedgraph file
-		$outfh2->printf("$chr\t%d\t$pos\t%.0f\n", $pos - 1, $frac);
+		my $sum = $c + $nc;
+		if ($sum == 0) {
+			# no values? why? just print zero fraction
+			# coverage file
+			$outfh1->printf("$chr\t$pos\t$pos\t0\t%d\t%d\n", $nc, $c);
+			# bedgraph file
+			$outfh2->printf("$chr\t%d\t$pos\t0\n", $pos - 1);
+		}
+		else {
+			my $frac = ($nc / $sum) * 100;
+			# coverage file
+			$outfh1->printf("$chr\t$pos\t$pos\t%.0f\t%d\t%d\n", $frac, $nc, $c);
+			# bedgraph file
+			$outfh2->printf("$chr\t%d\t$pos\t%.0f\n", $pos - 1, $frac);
+		}
 	}
 }
 
