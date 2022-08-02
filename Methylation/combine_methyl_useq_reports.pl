@@ -71,13 +71,13 @@ my @order;
 		num  => {},
 		char => {}
 	);
-	foreach my $path (@dirs) {
-		if ($path =~ /^(\d+)X(\d+)/) {
+	foreach my $id (keys %samples) {
+		if ($id =~ /(\d{4,5})X(\d+)/) {
 			# GNomEx identifier
-			$sorter{num}{$1}{$2} = $path;
+			$sorter{num}{$1}{$2} = $id;
 		}
 		else {
-			$sorter{char}{$path} = $path;
+			$sorter{char}{$id} = $id;
 		}
 	}
 	# sort by experiment ID, requestXsample, e.g. 1234X1
@@ -89,7 +89,7 @@ my @order;
 	}
 	# sort everything else
 	foreach my $i (sort {$a cmp $b} keys %{$sorter{char}}) {
-		push @order, $sorter{num}{$i};
+		push @order, $sorter{char}{$i};
 	}
 }
 
@@ -181,47 +181,54 @@ sub process_directory {
 	my $dir = shift;
 	$dir =~ s/\/$//; # remove any trailing slash
 	
+	# generate ID
+	my $id = $dir;
+	if ($dir =~ /(\d{4,5}X\d{1,2})/) {
+		# a GNomEx identifier
+		$id = $1;
+		print " > identified GNomEx identifer $id\n";
+	}
+	
+	
 	my @files = glob "$dir/*.txt";
 	
-	# counts
-	$samples{$dir} = {
-		total_alignments            => 0,
-		alignments_failed_mapq      => 0,
-		alignments_failed_AS        => 0,
-		alignments_passed           => 0,
-		alignments_passed_percent   => 0,
-		nonconverted_C              => 0,
-		converted_C                 => 0,
-		fraction_nonconverted       => 0,
-		fraction_bp_pass_quality    => 0,
-		labmda_fraction_nonc        => 0,
-		fraction_methyl_C           => 0,
-		fraction_methyl_CpG         => 0,
-		alignments_READ             => 0,
-		alignments_WRITTEN          => 0,
-		alignments_EXCLUDED         => 0,
-		alignments_PAIRED           => 0,
-		alignments_SINGLE           => 0,
-		alignments_DUP_PAIR         => 0,
-		alignments_DUP_SINGLE       => 0,
-		alignments_OPT_PAIR         => 0,
-		alignments_OPT_SINGLE       => 0,
-		alignments_DUP_TOTAL        => 0,
-		novoalign_read              => 0,
-		novoalign_unique            => 0,
-		novoalign_unique_percent    => 0,
-		novoalign_multi             => 0,
-		novoalign_multi_percent     => 0,
-		novoalign_unmapped          => 0,
-		novoalign_unmapped_percent  => 0,
-		novoalign_insert_mean       => 0
-	};
+	# initialize counts
+	$samples{$id}{total_alignments}            ||= 0;
+	$samples{$id}{alignments_failed_mapq}      ||= 0;
+	$samples{$id}{alignments_failed_AS}        ||= 0;
+	$samples{$id}{alignments_passed}           ||= 0;
+	$samples{$id}{alignments_passed_percent}   ||= 0;
+	$samples{$id}{nonconverted_C}              ||= 0;
+	$samples{$id}{converted_C}                 ||= 0;
+	$samples{$id}{fraction_nonconverted}       ||= 0;
+	$samples{$id}{fraction_bp_pass_quality}    ||= 0;
+	$samples{$id}{labmda_fraction_nonc}        ||= 0;
+	$samples{$id}{fraction_methyl_C}           ||= 0;
+	$samples{$id}{fraction_methyl_CpG}         ||= 0;
+	$samples{$id}{alignments_READ}             ||= 0;
+	$samples{$id}{alignments_WRITTEN}          ||= 0;
+	$samples{$id}{alignments_EXCLUDED}         ||= 0;
+	$samples{$id}{alignments_PAIRED}           ||= 0;
+	$samples{$id}{alignments_SINGLE}           ||= 0;
+	$samples{$id}{alignments_DUP_PAIR}         ||= 0;
+	$samples{$id}{alignments_DUP_SINGLE}       ||= 0;
+	$samples{$id}{alignments_OPT_PAIR}         ||= 0;
+	$samples{$id}{alignments_OPT_SINGLE}       ||= 0;
+	$samples{$id}{alignments_DUP_TOTAL}        ||= 0;
+	$samples{$id}{novoalign_read}              ||= 0;
+	$samples{$id}{novoalign_unique}            ||= 0;
+	$samples{$id}{novoalign_unique_percent}    ||= 0;
+	$samples{$id}{novoalign_multi}             ||= 0;
+	$samples{$id}{novoalign_multi_percent}     ||= 0;
+	$samples{$id}{novoalign_unmapped}          ||= 0;
+	$samples{$id}{novoalign_unmapped_percent}  ||= 0;
+	$samples{$id}{novoalign_insert_mean}       ||= 0;
 
 
 	
 	# process files
 	foreach my $file (@files) {
-		print "   scanning $dir/$file....\n"; 
+		print "   scanning $file....\n"; 
 		my $fh = IO::File->new($file) or 
 			die "unable to read $file! $!\n";
 	
@@ -230,92 +237,92 @@ sub process_directory {
 			
 			# USeq NovoalignBisulfiteParser
 			if ($line =~  /^Filtering statistics for (\d+) alignments:$/) {
-				$samples{$dir}{total_alignments} = $1;
+				$samples{$id}{total_alignments} = $1;
 			}
 			elsif ($line =~ /^(\d+)\tFailed mapping quality score /) {
-				$samples{$dir}{alignments_failed_mapq} = $1;
+				$samples{$id}{alignments_failed_mapq} = $1;
 			}
 			elsif ($line =~ /^(\d+)\tFailed alignment score /) {
-				$samples{$dir}{alignments_failed_AS} = $1;
+				$samples{$id}{alignments_failed_AS} = $1;
 			}
 			elsif ($line =~ /^(\d+)	Passed filters \((\d\d\.?\d?)%\)$/) {
-				$samples{$dir}{alignments_passed} = $1;
-				$samples{$dir}{alignments_passed_percent} = $2;
+				$samples{$id}{alignments_passed} = $1;
+				$samples{$id}{alignments_passed_percent} = $2;
 			}
 			elsif ($line =~ /^(\d+)\tTotal non\-converted Cs sequenced$/) {
-				$samples{$dir}{nonconverted_C} = $1;
+				$samples{$id}{nonconverted_C} = $1;
 			}
 			elsif ($line =~ /^(\d+)\tTotal converted Cs sequenced$/) {
-				$samples{$dir}{converted_C} = $1;
+				$samples{$id}{converted_C} = $1;
 			}
 			elsif ($line =~ /^(\d\.\d+)\tFraction non converted C's\.$/) {
-				$samples{$dir}{fraction_nonconverted} = $1;
+				$samples{$id}{fraction_nonconverted} = $1;
 			}
 			elsif ($line =~ /^(\d\.\d+)\tFraction bp passing quality \(\d+\)$/) {
-				$samples{$dir}{fraction_bp_pass_quality} = $1;
+				$samples{$id}{fraction_bp_pass_quality} = $1;
 			}
 			
 			# USeq BisStat 
 			elsif ($line =~ /^Using Lambda data to set the expected fraction non-converted Cs to (0\.\d+) /) {
-				$samples{$dir}{labmda_fraction_nonc} = $1;
+				$samples{$id}{labmda_fraction_nonc} = $1;
 			}
-			elsif ($line =~ /^\t(\d\.\d\d\d)\t\(\d+\/\d+\)\tmC\/\(C\+mC\)$/) {
-				$samples{$dir}{fraction_methyl_C} = $1;
+			elsif ($line =~ /^\t(\d\.\d+)\t\(\d+\/\d+\)\tmC\/\(C\+mC\)$/) {
+				$samples{$id}{fraction_methyl_C} = $1;
 			}
-			elsif ($line =~ /^\t(\d\.\d\d\d)\t\(\d+\/\d+\)\tmCG\/\(CG\+mCG\)$/) {
-				$samples{$dir}{fraction_methyl_CpG} = $1;
+			elsif ($line =~ /^\t(\d\.\d+)\t\(\d+\/\d+\)\tmCG\/\(CG\+mCG\)$/) {
+				$samples{$id}{fraction_methyl_CpG} = $1;
 			}
 			
 			# Samtools MarkDup
 			elsif ($line =~ /^READ: (\d+)$/) {
-				$samples{$dir}{alignments_READ} = $1;
+				$samples{$id}{alignments_READ} = $1;
 			}
 			elsif ($line =~ /^WRITTEN: (\d+)$/) {
-				$samples{$dir}{alignments_WRITTEN} = $1;
+				$samples{$id}{alignments_WRITTEN} = $1;
 			}
 			elsif ($line =~ /^EXCLUDED: (\d+)$/) {
-				$samples{$dir}{alignments_EXCLUDED} = $1;
+				$samples{$id}{alignments_EXCLUDED} = $1;
 			}
 			elsif ($line =~ /^PAIRED: (\d+)$/) {
-				$samples{$dir}{alignments_PAIRED} = $1;
+				$samples{$id}{alignments_PAIRED} = $1;
 			}			
 			elsif ($line =~ /^SINGLE: (\d+)$/) {
-				$samples{$dir}{alignments_SINGLE} = $1;
+				$samples{$id}{alignments_SINGLE} = $1;
 			}
 			elsif ($line =~ /^DUPLICATE PAIR: (\d+)$/) {
-				$samples{$dir}{alignments_DUP_PAIR} = $1;
+				$samples{$id}{alignments_DUP_PAIR} = $1;
 			}
 			elsif ($line =~ /^DUPLICATE SINGLE: (\d+)$/) {
-				$samples{$dir}{alignments_DUP_SINGLE} = $1;
+				$samples{$id}{alignments_DUP_SINGLE} = $1;
 			}
 			elsif ($line =~ /^DUPLICATE PAIR OPTICAL: (\d+)$/) {
-				$samples{$dir}{alignments_OPT_PAIR} = $1;
+				$samples{$id}{alignments_OPT_PAIR} = $1;
 			}
 			elsif ($line =~ /^DUPLICATE SINGLE OPTICAL: (\d+)$/) {
-				$samples{$dir}{alignments_OPT_SINGLE} = $1;
+				$samples{$id}{alignments_OPT_SINGLE} = $1;
 			}
 			elsif ($line =~ /^DUPLICATE TOTAL: (\d+)$/) {
-				$samples{$dir}{alignments_DUP_TOTAL} = $1;
+				$samples{$id}{alignments_DUP_TOTAL} = $1;
 			}
 			
 			# Novoalign standard error output
 			elsif ($line =~  /^#\s+Read Sequences:\s+(\d+)/) {
-				$samples{$dir}{novoalign_read} = $1;
+				$samples{$id}{novoalign_read} = $1;
 			}
 			elsif ($line =~  /^#\s+Unique Alignment:\s+(\d+) \( ?(\d+\.\d)%\)$/) {
-				$samples{$dir}{novoalign_unique} = $1;
-				$samples{$dir}{novoalign_unique_percent} = $2;
+				$samples{$id}{novoalign_unique} = $1;
+				$samples{$id}{novoalign_unique_percent} = $2;
 			}
 			elsif ($line =~ /^#\s+Multi Mapped:\s+(\d+) \( ?(\d+\.\d)%\)$/) {
-				$samples{$dir}{novoalign_multi} = $1;
-				$samples{$dir}{novoalign_multi_percent} = $2;
+				$samples{$id}{novoalign_multi} = $1;
+				$samples{$id}{novoalign_multi_percent} = $2;
 			}
 			elsif ($line =~ /^#\s+No Mapping Found:\s+(\d+) \( ?(\d+\.\d)%\)$/) {
-				$samples{$dir}{novoalign_unmapped} = $1;
-				$samples{$dir}{novoalign_unmapped_percent} = $2;
+				$samples{$id}{novoalign_unmapped} = $1;
+				$samples{$id}{novoalign_unmapped_percent} = $2;
 			}
 			elsif ($line =~ /^#\s+Mean\s+(\d+),\s+Std Dev\s+(\d+\.\d)$/) {
-				$samples{$dir}{novoalign_insert_mean} = $1;
+				$samples{$id}{novoalign_insert_mean} = $1;
 			}
 			
 		}
