@@ -51,6 +51,7 @@ foreach my $chr ($c_db->seq_ids) {
 	# skip unwanted chromosomes
 	if ($chr =~ /(?:chrM|MT|Mito|Lambda|PhiX)/i) {
 		print " skipping $chr\n";
+		next;
 	}
 	else {
 		print " processing $chr\n";
